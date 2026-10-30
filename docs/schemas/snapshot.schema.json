@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-archive.dev/schemas/snapshot.schema.json",
+  "title": "ContextArchiveSnapshot",
+  "description": "Schema for immutable checkpoint files in .context/snapshots/snapshot-NNNN.json.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "parent_snapshot_id",
+    "repository_id",
+    "created_at",
+    "config_fingerprint",
+    "git_state",
+    "incorporated_journal_cursor",
+    "incorporated_change_ids",
+    "file_fingerprints",
+    "graph"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "snapshot_id": { "type": "string", "pattern": "^snapshot-[0-9]{4,}$" },
+    "parent_snapshot_id": { "type": ["string", "null"] },
+    "repository_id": { "type": "string", "pattern": "^repo:sha256:[a-f0-9]{32,64}$" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "config_fingerprint": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "git_state": { "type": "object" },
+    "incorporated_journal_cursor": { "type": ["string", "null"] },
+    "incorporated_change_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "file_fingerprints": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "graph": { "$ref": "graph.schema.json" }
+  }
+}

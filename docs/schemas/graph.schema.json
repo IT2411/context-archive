@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-archive.dev/schemas/graph.schema.json",
+  "title": "CanonicalGraph",
+  "description": "Schema for .context/graph.json storing deterministic Nodes, Edges, Provenance, and Diagnostics.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "repository_id",
+    "base_snapshot_id",
+    "applied_journal_cursor",
+    "nodes",
+    "edges",
+    "diagnostics"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "repository_id": { "type": "string", "pattern": "^repo:sha256:[a-f0-9]{32,64}$" },
+    "base_snapshot_id": { "type": "string", "pattern": "^snapshot-[0-9]{4,}$" },
+    "applied_journal_cursor": { "type": ["string", "null"] },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Node" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Edge" }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Diagnostic" }
+    }
+  },
+  "$defs": {
+    "Provenance": {
+      "type": "object",
+      "required": ["source_path", "line_start", "line_end", "extractor", "evidence_kind", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "source_path": { "type": "string", "minLength": 1 },
+        "line_start": { "type": "integer", "minimum": 1 },
+        "line_end": { "type": "integer", "minimum": 1 },
+        "extractor": { "type": "string", "minLength": 1 },
+        "evidence_kind": {
+          "type": "string",
+          "enum": ["deterministic", "heuristic", "human_confirmed", "external_spec"]
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low", "unknown"]
+        }
+      }
+    },
+    "Node": {
+      "type": "object",
+      "required": ["id", "kind", "name", "qualified_name", "attributes", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "Repository",
+            "Directory",
+            "File",
+            "Module",
+            "Class",
+            "Function",
+            "Method",
+            "Variable",
+            "Endpoint",
+            "Schema",
+            "DataEntity",
+            "Test",
+            "Dependency",
+            "Configuration",
+            "Decision",
+            "Constraint"
+          ]
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "qualified_name": { "type": "string", "minLength": 1 },
+        "attributes": { "type": "object" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "Edge": {
+      "type": "object",
+      "required": ["id", "kind", "source_id", "target_id", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "CONTAINS",
+            "IMPORTS",
+            "DEFINES",
+            "INHERITS",
+            "CALLS",
+            "DECORATES",
+            "EXPOSES",
+            "CONSUMES",
+            "VALIDATES_WITH",
+            "READS",
+            "WRITES",
+            "TESTED_BY",
+            "DEPENDS_ON",
+            "CONSTRAINED_BY",
+            "IMPACTS"
+          ]
+        },
+        "source_id": { "type": "string", "minLength": 1 },
+        "target_id": { "type": "string", "minLength": 1 },
+        "attributes": { "type": "object" },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    },
+    "Diagnostic": {
+      "type": "object",
+      "required": ["code", "severity", "message", "source_path"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+        "message": { "type": "string", "minLength": 1 },
+        "source_path": { "type": ["string", "null"] },
+        "line": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    }
+  }
+}

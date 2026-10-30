@@ -1,0 +1,19 @@
+name: Feature Request
+description: Propose a new adapter, command capability, or enhancement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What workflow or context challenge does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the desired CLI/SDK behavior.
+    validations:
+      required: true

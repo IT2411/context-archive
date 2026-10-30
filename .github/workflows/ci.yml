@@ -1,0 +1,50 @@
+name: CI Quality Gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality-gates:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Gate 1 - Verify Poetry lockfile
+        run: poetry check --lock
+
+      - name: Gate 2 - Run Ruff linter
+        run: poetry run ruff check .
+
+      - name: Gate 3 - Run Ruff formatter check
+        run: poetry run ruff format --check .
+
+      - name: Gate 4 - Run Mypy strict typecheck
+        run: poetry run mypy src tests --strict
+
+      - name: Gate 5 - Run Pytest with coverage gate
+        run: poetry run pytest --cov=context_archive --cov-fail-under=90

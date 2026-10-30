@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-archive.dev/schemas/journal-record.schema.json",
+  "title": "JournalRecord",
+  "description": "Schema for individual append-only JSONL records in .context/journal/YYYY-MM.jsonl.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "change_id",
+    "parent_change_id",
+    "recorded_at",
+    "repository_id",
+    "base_snapshot_id",
+    "update_level",
+    "source_state",
+    "category",
+    "intent",
+    "file_changes",
+    "impact_summary",
+    "supersedes",
+    "record_status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "change_id": { "type": "string", "pattern": "^CA-[0-9]{8}-[0-9]{4,}$" },
+    "parent_change_id": { "type": ["string", "null"] },
+    "recorded_at": { "type": "string", "format": "date-time" },
+    "repository_id": { "type": "string", "pattern": "^repo:sha256:[a-f0-9]{32,64}$" },
+    "base_snapshot_id": { "type": "string", "pattern": "^snapshot-[0-9]{4,}$" },
+    "update_level": { "type": "string", "enum": ["L1", "L2", "L3"] },
+    "source_state": {
+      "type": "object",
+      "required": ["commit_sha", "branch", "is_dirty", "tree_fingerprint"],
+      "additionalProperties": false,
+      "properties": {
+        "commit_sha": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "is_dirty": { "type": "boolean" },
+        "tree_fingerprint": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "feature",
+        "bug_fix",
+        "refactor",
+        "contract_change",
+        "schema_change",
+        "dependency_change",
+        "config_change",
+        "test_change",
+        "docs_change",
+        "revert",
+        "unknown"
+      ]
+    },
+    "intent": {
+      "type": "object",
+      "required": ["summary", "origin", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "summary": { "type": "string", "minLength": 1 },
+        "origin": {
+          "type": "string",
+          "enum": ["developer_confirmed", "deterministic_classifier", "heuristic"]
+        },
+        "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
+      }
+    },
+    "file_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "operation", "old_sha256", "new_sha256", "modified_symbols"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "operation": { "type": "string", "enum": ["added", "modified", "deleted", "renamed"] },
+          "old_sha256": { "type": ["string", "null"] },
+          "new_sha256": { "type": ["string", "null"] },
+          "modified_symbols": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "impact_summary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target_id", "relationship", "confidence", "evidence_path"],
+        "additionalProperties": false,
+        "properties": {
+          "target_id": { "type": "string" },
+          "relationship": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["direct", "inferred_downstream"] },
+          "evidence_path": { "type": "string" }
+        }
+      }
+    },
+    "supersedes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "record_status": { "type": "string", "enum": ["active", "superseded"] }
+  }
+}

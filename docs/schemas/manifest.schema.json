@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-archive.dev/schemas/manifest.schema.json",
+  "title": "ContextArchiveManifest",
+  "description": "Schema for .context/manifest.json tracking repository identity, cursors, and fingerprints.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool_version",
+    "repository_id",
+    "generated_at",
+    "config_fingerprint",
+    "git_state",
+    "state_cursors",
+    "scan_summary",
+    "file_fingerprints"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "tool_version": { "type": "string", "minLength": 1 },
+    "repository_id": { "type": "string", "pattern": "^repo:sha256:[a-f0-9]{32,64}$" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "config_fingerprint": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "git_state": {
+      "type": "object",
+      "required": ["is_git_repo", "commit_sha", "branch", "is_dirty", "untracked_count"],
+      "additionalProperties": false,
+      "properties": {
+        "is_git_repo": { "type": "boolean" },
+        "commit_sha": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "is_dirty": { "type": "boolean" },
+        "untracked_count": { "type": "integer", "minimum": 0 },
+        "remote_url": { "type": ["string", "null"] }
+      }
+    },
+    "state_cursors": {
+      "type": "object",
+      "required": [
+        "latest_snapshot_id",
+        "snapshot_incorporated_journal_cursor",
+        "head_journal_cursor",
+        "unincorporated_record_count",
+        "notes_fingerprint"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "latest_snapshot_id": { "type": "string", "pattern": "^snapshot-[0-9]{4,}$" },
+        "snapshot_incorporated_journal_cursor": { "type": ["string", "null"] },
+        "head_journal_cursor": { "type": ["string", "null"] },
+        "unincorporated_record_count": { "type": "integer", "minimum": 0 },
+        "notes_fingerprint": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
+    "scan_summary": {
+      "type": "object",
+      "required": [
+        "files_discovered",
+        "files_analyzed",
+        "files_excluded",
+        "files_failed",
+        "unsupported_files"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "files_discovered": { "type": "integer", "minimum": 0 },
+        "files_analyzed": { "type": "integer", "minimum": 0 },
+        "files_excluded": { "type": "integer", "minimum": 0 },
+        "files_failed": { "type": "integer", "minimum": 0 },
+        "unsupported_files": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "file_fingerprints": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      }
+    }
+  }
+}
