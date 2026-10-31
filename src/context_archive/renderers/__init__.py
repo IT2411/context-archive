@@ -17,6 +17,10 @@ from context_archive.renderers.markdown import (
     extract_dev_commands,
     render_project_context_markdown,
 )
+from context_archive.renderers.mermaid import (
+    render_diff_mermaid,
+    render_graph_mermaid,
+)
 
 __all__ = [
     "DEFAULT_MANUAL_NOTES_BLOCK",
@@ -28,6 +32,8 @@ __all__ = [
     "MANUAL_START",
     "export_canonical_json",
     "extract_dev_commands",
+    "render_diff_mermaid",
     "render_export_bundle_json",
+    "render_graph_mermaid",
     "render_project_context_markdown",
 ]

@@ -12,6 +12,11 @@ import typer
 from context_archive import __version__
 from context_archive.adapters.python_ast import PythonAstAdapter
 from context_archive.config import CtxaConfig, load_config, render_default_ctxa_toml
+from context_archive.context.differ import (
+    SemanticDiffReport,
+    compute_downstream_impacts,
+    compute_semantic_diff,
+)
 from context_archive.context.verifier import verify_repository_freshness
 from context_archive.exceptions import (
     ConfigError,
@@ -25,9 +30,11 @@ from context_archive.model.manifest import Manifest, StateCursors, load_manifest
 from context_archive.notes.manager import append_human_note, sync_manual_notes
 from context_archive.renderers.json_exporter import export_canonical_json
 from context_archive.renderers.markdown import render_project_context_markdown
+from context_archive.renderers.mermaid import render_diff_mermaid, render_graph_mermaid
 from context_archive.scanner.discovery import discover_repo_root
 from context_archive.scanner.walker import scan_repository
 from context_archive.state.detector import detect_repository_changes
+from context_archive.state.invalidator import refresh_graph_incrementally
 from context_archive.state.journal import (
     JournalRecord,
     JournalSourceState,
@@ -225,7 +232,7 @@ def execute_incremental_update(
     developer_message: str | None = None,
     deterministic: bool = False,
 ) -> IncrementalUpdateResult:
-    """Detect repository changes, append a JSONL journal record, and update manifest state."""
+    """Detect repository changes, append a JSONL journal record, and refresh graph state."""
     context_dir = repo_root / ".context"
     manifest_file = context_dir / "manifest.json"
     graph_file = context_dir / "graph.json"
@@ -276,40 +283,19 @@ def execute_incremental_update(
         )
         parent_change_id = existing_records[-1].change_id if existing_records else None
 
-        record = JournalRecord(
-            change_id=change_id,
-            parent_change_id=parent_change_id,
-            recorded_at=recorded_at,
-            repository_id=manifest.repository_id,
-            base_snapshot_id=manifest.state_cursors.latest_snapshot_id,
-            update_level=detection.update_level,
-            source_state=JournalSourceState(
-                commit_sha=live_scan.git_state.commit_sha,
-                branch=live_scan.git_state.branch,
-                is_dirty=live_scan.git_state.is_dirty,
-                tree_fingerprint=detection.tree_fingerprint,
-            ),
-            category=detection.category,
-            intent=detection.intent,
-            file_changes=detection.file_changes,
-            impact_summary=(),
-            supersedes=(),
-            record_status="active",
-        )
-        append_journal_record(context_dir, record, partition_ym=ym_partition)
-
-        updated_graph = previous_graph
+        effective_level = detection.update_level
         if detection.update_level in ("L2", "L3"):
-            py_adapter = PythonAstAdapter()
-            ast_res = py_adapter.extract_repository(repo_root, live_scan.files)
-            updated_graph = CanonicalGraph.build(
-                repository_id=live_scan.repository_id,
+            invalidation = refresh_graph_incrementally(
+                repo_root=repo_root,
+                previous_graph=previous_graph,
+                live_files=live_scan.files,
+                file_changes=detection.file_changes,
+                requested_level=detection.update_level,
                 base_snapshot_id=manifest.state_cursors.latest_snapshot_id,
                 applied_journal_cursor=change_id,
-                nodes=ast_res.nodes,
-                edges=ast_res.edges,
-                diagnostics=ast_res.diagnostics,
             )
+            updated_graph = invalidation.graph
+            effective_level = invalidation.effective_level
         else:
             updated_graph = CanonicalGraph.build(
                 repository_id=previous_graph.repository_id,
@@ -319,6 +305,38 @@ def execute_incremental_update(
                 edges=previous_graph.edges,
                 diagnostics=previous_graph.diagnostics,
             )
+
+        modified_symbol_ids = {
+            sym_id for fc in detection.file_changes for sym_id in fc.modified_symbols
+        }
+        downstream_items = compute_downstream_impacts(
+            updated_graph,
+            modified_symbol_ids,
+            max_hops=2,
+        )
+        journal_impacts = tuple(item.to_journal_impact() for item in downstream_items)
+
+        record = JournalRecord(
+            change_id=change_id,
+            parent_change_id=parent_change_id,
+            recorded_at=recorded_at,
+            repository_id=manifest.repository_id,
+            base_snapshot_id=manifest.state_cursors.latest_snapshot_id,
+            update_level=effective_level,
+            source_state=JournalSourceState(
+                commit_sha=live_scan.git_state.commit_sha,
+                branch=live_scan.git_state.branch,
+                is_dirty=live_scan.git_state.is_dirty,
+                tree_fingerprint=detection.tree_fingerprint,
+            ),
+            category=detection.category,
+            intent=detection.intent,
+            file_changes=detection.file_changes,
+            impact_summary=journal_impacts,
+            supersedes=(),
+            record_status="active",
+        )
+        append_journal_record(context_dir, record, partition_ym=ym_partition)
         atomic_write_text(graph_file, updated_graph.to_deterministic_json())
 
         inc_cursor = manifest.state_cursors.snapshot_incorporated_journal_cursor
@@ -351,9 +369,54 @@ def execute_incremental_update(
     return IncrementalUpdateResult(
         repo_root=repo_root,
         is_noop=False,
-        update_level=detection.update_level,
+        update_level=effective_level,
         record=record,
         manifest=updated_manifest,
+    )
+
+
+def execute_repository_diff(
+    repo_root: Path,
+    config: CtxaConfig,
+    *,
+    since_snapshot_id: str | None = None,
+) -> SemanticDiffReport:
+    """Compute a SemanticDiffReport between a baseline snapshot and the live repository."""
+    context_dir = repo_root / ".context"
+    if not (context_dir / "manifest.json").is_file():
+        execute_full_handoff(repo_root, config)
+
+    manifest = load_manifest(context_dir)
+    target_snap_id = since_snapshot_id or manifest.state_cursors.latest_snapshot_id
+    baseline_snapshot = load_snapshot(context_dir, target_snap_id)
+
+    live_scan = scan_repository(repo_root, config)
+    py_adapter = PythonAstAdapter()
+    ast_res = py_adapter.extract_repository(repo_root, live_scan.files)
+    live_graph = CanonicalGraph.build(
+        repository_id=live_scan.repository_id,
+        base_snapshot_id=target_snap_id,
+        applied_journal_cursor=manifest.state_cursors.head_journal_cursor,
+        nodes=ast_res.nodes,
+        edges=ast_res.edges,
+        diagnostics=ast_res.diagnostics,
+    )
+
+    records = read_all_journal_records(context_dir)
+    inc_cursor = baseline_snapshot.incorporated_journal_cursor
+    body_modified: set[str] = set()
+    for rec in records:
+        if rec.record_status == "active" and (inc_cursor is None or rec.change_id > inc_cursor):
+            for fc in rec.file_changes:
+                body_modified.update(fc.modified_symbols)
+
+    return compute_semantic_diff(
+        baseline_id=target_snap_id,
+        baseline_graph=baseline_snapshot.graph,
+        baseline_fingerprints=baseline_snapshot.file_fingerprints,
+        current_graph=live_graph,
+        current_fingerprints=live_scan.file_fingerprints(),
+        body_modified_symbols=body_modified,
     )
 
 
@@ -625,8 +688,17 @@ def diff(
             ),
             as_json=(output_format == "json"),
         )
-    repo_root, _ = _resolve_target_and_config(path, as_json=(output_format == "json"))
-    typer.echo(f"Diff ({output_format}) for {repo_root} since {since or 'latest'}")
+    repo_root, cfg = _resolve_target_and_config(path, as_json=(output_format == "json"))
+    try:
+        report = execute_repository_diff(repo_root, cfg, since_snapshot_id=since)
+        if output_format == "json":
+            typer.echo(report.to_deterministic_json(), nl=False)
+        elif output_format == "mermaid":
+            typer.echo(render_diff_mermaid(report), nl=False)
+        else:
+            typer.echo(report.render_text(), nl=False)
+    except CtxaError as exc:
+        _handle_cli_error(exc, as_json=(output_format == "json"))
 
 
 @app.command()
@@ -744,12 +816,15 @@ def export(
                 graph=graph,
                 output_path=output,
             )
-            if output is None:
-                typer.echo(rendered, nl=False)
-            else:
-                typer.echo(f"Exported JSON bundle to {output}")
         else:
-            typer.echo(f"Export ({output_format}) for {repo_root} -> {output or 'stdout'}")
+            rendered = render_graph_mermaid(graph)
+            if output is not None:
+                atomic_write_text(output, rendered)
+
+        if output is None:
+            typer.echo(rendered, nl=False)
+        else:
+            typer.echo(f"Exported {output_format} artifact to {output}")
     except CtxaError as exc:
         _handle_cli_error(exc)
 

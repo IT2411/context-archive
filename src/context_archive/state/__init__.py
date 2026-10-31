@@ -6,6 +6,11 @@ from context_archive.state.detector import (
     ChangeDetectionResult,
     detect_repository_changes,
 )
+from context_archive.state.invalidator import (
+    GraphInvalidationResult,
+    compute_invalidated_paths,
+    refresh_graph_incrementally,
+)
 from context_archive.state.journal import (
     ChangeCategory,
     JournalFileChange,
@@ -29,6 +34,7 @@ from context_archive.state.snapshot import (
 __all__ = [
     "ChangeCategory",
     "ChangeDetectionResult",
+    "GraphInvalidationResult",
     "JournalFileChange",
     "JournalImpactItem",
     "JournalIntent",
@@ -37,11 +43,13 @@ __all__ = [
     "Snapshot",
     "UpdateLevel",
     "append_journal_record",
+    "compute_invalidated_paths",
     "compute_tree_fingerprint",
     "detect_repository_changes",
     "format_snapshot_id",
     "generate_next_change_id",
     "load_snapshot",
     "read_all_journal_records",
+    "refresh_graph_incrementally",
     "write_snapshot",
 ]
