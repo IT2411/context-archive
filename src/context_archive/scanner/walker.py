@@ -249,6 +249,12 @@ def scan_repository(
     )
     exclude_spec = _build_pathspec(exclude_patterns)
     secret_spec = _build_pathspec(list(config.scanner.secret_globs))
+    self_managed_files = {
+        config.context.output_path,
+        f"{config.context.output_path}.bak",
+        "PROJECT_CONTEXT.md",
+        "PROJECT_CONTEXT.md.bak",
+    }
 
     visited_dirs: set[tuple[int, int]] = set()
     try:
@@ -302,7 +308,10 @@ def scan_repository(
         for entry in entries:
             rel_posix = entry.relative_to(resolved_root).as_posix()
 
-            # Check symlink safety before resolving or descending
+            # Skip ctxa's own output artifacts so repeated runs are 100% idempotent
+            if rel_posix in self_managed_files:
+                continue
+
             if entry.is_symlink():
                 try:
                     resolved_target = entry.resolve(strict=True)
@@ -383,7 +392,7 @@ def scan_repository(
                 continue
 
             # 2. Standard ignore/exclude check
-            if exclude_spec.match_file(rel_posix) or rel_posix == config.context.output_path:
+            if exclude_spec.match_file(rel_posix):
                 files_excluded += 1
                 continue
 

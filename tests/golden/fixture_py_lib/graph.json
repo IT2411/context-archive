@@ -1,0 +1,488 @@
+{
+  "applied_journal_cursor": null,
+  "base_snapshot_id": "snapshot-0001",
+  "diagnostics": [],
+  "edges": [
+    {
+      "id": "edge:CALLS:sym:py:src/sample_lib/calculator.py:calculate_total->sym:py:src/sample_lib/utils.py:round_currency",
+      "kind": "CALLS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 24,
+        "line_start": 24,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "source_id": "sym:py:src/sample_lib/calculator.py:calculate_total",
+      "target_id": "sym:py:src/sample_lib/utils.py:round_currency"
+    },
+    {
+      "id": "edge:CALLS:sym:py:tests/test_calculator.py:test_calculate_total_with_tax->sym:py:src/sample_lib/calculator.py:LineItem",
+      "kind": "CALLS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 12,
+        "line_start": 12,
+        "source_path": "tests/test_calculator.py"
+      },
+      "source_id": "sym:py:tests/test_calculator.py:test_calculate_total_with_tax",
+      "target_id": "sym:py:src/sample_lib/calculator.py:LineItem"
+    },
+    {
+      "id": "edge:CALLS:sym:py:tests/test_calculator.py:test_calculate_total_with_tax->sym:py:src/sample_lib/calculator.py:calculate_total",
+      "kind": "CALLS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 13,
+        "line_start": 13,
+        "source_path": "tests/test_calculator.py"
+      },
+      "source_id": "sym:py:tests/test_calculator.py:test_calculate_total_with_tax",
+      "target_id": "sym:py:src/sample_lib/calculator.py:calculate_total"
+    },
+    {
+      "id": "edge:CONTAINS:file:src/sample_lib/__init__.py->mod:py:src/sample_lib/__init__.py:sample_lib",
+      "kind": "CONTAINS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 7,
+        "line_start": 1,
+        "source_path": "src/sample_lib/__init__.py"
+      },
+      "source_id": "file:src/sample_lib/__init__.py",
+      "target_id": "mod:py:src/sample_lib/__init__.py:sample_lib"
+    },
+    {
+      "id": "edge:CONTAINS:file:src/sample_lib/calculator.py->mod:py:src/sample_lib/calculator.py:sample_lib.calculator",
+      "kind": "CONTAINS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 24,
+        "line_start": 1,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "source_id": "file:src/sample_lib/calculator.py",
+      "target_id": "mod:py:src/sample_lib/calculator.py:sample_lib.calculator"
+    },
+    {
+      "id": "edge:CONTAINS:file:src/sample_lib/utils.py->mod:py:src/sample_lib/utils.py:sample_lib.utils",
+      "kind": "CONTAINS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 10,
+        "line_start": 1,
+        "source_path": "src/sample_lib/utils.py"
+      },
+      "source_id": "file:src/sample_lib/utils.py",
+      "target_id": "mod:py:src/sample_lib/utils.py:sample_lib.utils"
+    },
+    {
+      "id": "edge:CONTAINS:file:tests/test_calculator.py->mod:py:tests/test_calculator.py:tests.test_calculator",
+      "kind": "CONTAINS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 13,
+        "line_start": 1,
+        "source_path": "tests/test_calculator.py"
+      },
+      "source_id": "file:tests/test_calculator.py",
+      "target_id": "mod:py:tests/test_calculator.py:tests.test_calculator"
+    },
+    {
+      "id": "edge:DEFINES:mod:py:src/sample_lib/calculator.py:sample_lib.calculator->sym:py:src/sample_lib/calculator.py:LineItem",
+      "kind": "DEFINES",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 17,
+        "line_start": 12,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "source_id": "mod:py:src/sample_lib/calculator.py:sample_lib.calculator",
+      "target_id": "sym:py:src/sample_lib/calculator.py:LineItem"
+    },
+    {
+      "id": "edge:DEFINES:mod:py:src/sample_lib/calculator.py:sample_lib.calculator->sym:py:src/sample_lib/calculator.py:calculate_total",
+      "kind": "DEFINES",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 24,
+        "line_start": 20,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "source_id": "mod:py:src/sample_lib/calculator.py:sample_lib.calculator",
+      "target_id": "sym:py:src/sample_lib/calculator.py:calculate_total"
+    },
+    {
+      "id": "edge:DEFINES:mod:py:src/sample_lib/utils.py:sample_lib.utils->sym:py:src/sample_lib/utils.py:round_currency",
+      "kind": "DEFINES",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 10,
+        "line_start": 8,
+        "source_path": "src/sample_lib/utils.py"
+      },
+      "source_id": "mod:py:src/sample_lib/utils.py:sample_lib.utils",
+      "target_id": "sym:py:src/sample_lib/utils.py:round_currency"
+    },
+    {
+      "id": "edge:DEFINES:mod:py:tests/test_calculator.py:tests.test_calculator->sym:py:tests/test_calculator.py:test_calculate_total_with_tax",
+      "kind": "DEFINES",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 13,
+        "line_start": 10,
+        "source_path": "tests/test_calculator.py"
+      },
+      "source_id": "mod:py:tests/test_calculator.py:tests.test_calculator",
+      "target_id": "sym:py:tests/test_calculator.py:test_calculate_total_with_tax"
+    },
+    {
+      "id": "edge:IMPORTS:mod:py:src/sample_lib/__init__.py:sample_lib->sym:py:src/sample_lib/calculator.py:LineItem",
+      "kind": "IMPORTS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 5,
+        "line_start": 5,
+        "source_path": "src/sample_lib/__init__.py"
+      },
+      "source_id": "mod:py:src/sample_lib/__init__.py:sample_lib",
+      "target_id": "sym:py:src/sample_lib/calculator.py:LineItem"
+    },
+    {
+      "id": "edge:IMPORTS:mod:py:src/sample_lib/__init__.py:sample_lib->sym:py:src/sample_lib/calculator.py:calculate_total",
+      "kind": "IMPORTS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 5,
+        "line_start": 5,
+        "source_path": "src/sample_lib/__init__.py"
+      },
+      "source_id": "mod:py:src/sample_lib/__init__.py:sample_lib",
+      "target_id": "sym:py:src/sample_lib/calculator.py:calculate_total"
+    },
+    {
+      "id": "edge:IMPORTS:mod:py:src/sample_lib/calculator.py:sample_lib.calculator->sym:py:src/sample_lib/utils.py:round_currency",
+      "kind": "IMPORTS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 8,
+        "line_start": 8,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "source_id": "mod:py:src/sample_lib/calculator.py:sample_lib.calculator",
+      "target_id": "sym:py:src/sample_lib/utils.py:round_currency"
+    },
+    {
+      "id": "edge:IMPORTS:mod:py:tests/test_calculator.py:tests.test_calculator->sym:py:src/sample_lib/calculator.py:LineItem",
+      "kind": "IMPORTS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 7,
+        "line_start": 7,
+        "source_path": "tests/test_calculator.py"
+      },
+      "source_id": "mod:py:tests/test_calculator.py:tests.test_calculator",
+      "target_id": "sym:py:src/sample_lib/calculator.py:LineItem"
+    },
+    {
+      "id": "edge:IMPORTS:mod:py:tests/test_calculator.py:tests.test_calculator->sym:py:src/sample_lib/calculator.py:calculate_total",
+      "kind": "IMPORTS",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 7,
+        "line_start": 7,
+        "source_path": "tests/test_calculator.py"
+      },
+      "source_id": "mod:py:tests/test_calculator.py:tests.test_calculator",
+      "target_id": "sym:py:src/sample_lib/calculator.py:calculate_total"
+    },
+    {
+      "id": "edge:TESTED_BY:sym:py:src/sample_lib/calculator.py:LineItem->sym:py:tests/test_calculator.py:test_calculate_total_with_tax",
+      "kind": "TESTED_BY",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 12,
+        "line_start": 12,
+        "source_path": "tests/test_calculator.py"
+      },
+      "source_id": "sym:py:src/sample_lib/calculator.py:LineItem",
+      "target_id": "sym:py:tests/test_calculator.py:test_calculate_total_with_tax"
+    },
+    {
+      "id": "edge:TESTED_BY:sym:py:src/sample_lib/calculator.py:calculate_total->sym:py:tests/test_calculator.py:test_calculate_total_with_tax",
+      "kind": "TESTED_BY",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 13,
+        "line_start": 13,
+        "source_path": "tests/test_calculator.py"
+      },
+      "source_id": "sym:py:src/sample_lib/calculator.py:calculate_total",
+      "target_id": "sym:py:tests/test_calculator.py:test_calculate_total_with_tax"
+    }
+  ],
+  "nodes": [
+    {
+      "attributes": {
+        "language": "python",
+        "size_bytes": 195
+      },
+      "id": "file:src/sample_lib/__init__.py",
+      "kind": "File",
+      "name": "__init__.py",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 7,
+        "line_start": 1,
+        "source_path": "src/sample_lib/__init__.py"
+      },
+      "qualified_name": "src/sample_lib/__init__.py"
+    },
+    {
+      "attributes": {
+        "language": "python",
+        "size_bytes": 660
+      },
+      "id": "file:src/sample_lib/calculator.py",
+      "kind": "File",
+      "name": "calculator.py",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 24,
+        "line_start": 1,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "qualified_name": "src/sample_lib/calculator.py"
+    },
+    {
+      "attributes": {
+        "language": "python",
+        "size_bytes": 309
+      },
+      "id": "file:src/sample_lib/utils.py",
+      "kind": "File",
+      "name": "utils.py",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 10,
+        "line_start": 1,
+        "source_path": "src/sample_lib/utils.py"
+      },
+      "qualified_name": "src/sample_lib/utils.py"
+    },
+    {
+      "attributes": {
+        "language": "python",
+        "size_bytes": 417
+      },
+      "id": "file:tests/test_calculator.py",
+      "kind": "File",
+      "name": "test_calculator.py",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 13,
+        "line_start": 1,
+        "source_path": "tests/test_calculator.py"
+      },
+      "qualified_name": "tests/test_calculator.py"
+    },
+    {
+      "attributes": {
+        "docstring_summary": "Sample library package for AST extraction tests.",
+        "is_test_module": false
+      },
+      "id": "mod:py:src/sample_lib/__init__.py:sample_lib",
+      "kind": "Module",
+      "name": "sample_lib",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 7,
+        "line_start": 1,
+        "source_path": "src/sample_lib/__init__.py"
+      },
+      "qualified_name": "sample_lib"
+    },
+    {
+      "attributes": {
+        "docstring_summary": "Core pricing calculator module.",
+        "is_test_module": false
+      },
+      "id": "mod:py:src/sample_lib/calculator.py:sample_lib.calculator",
+      "kind": "Module",
+      "name": "calculator",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 24,
+        "line_start": 1,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "qualified_name": "sample_lib.calculator"
+    },
+    {
+      "attributes": {
+        "docstring_summary": "Currency rounding utilities.",
+        "is_test_module": false
+      },
+      "id": "mod:py:src/sample_lib/utils.py:sample_lib.utils",
+      "kind": "Module",
+      "name": "utils",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 10,
+        "line_start": 1,
+        "source_path": "src/sample_lib/utils.py"
+      },
+      "qualified_name": "sample_lib.utils"
+    },
+    {
+      "attributes": {
+        "docstring_summary": "Tests for sample_lib.calculator.",
+        "is_test_module": true
+      },
+      "id": "mod:py:tests/test_calculator.py:tests.test_calculator",
+      "kind": "Module",
+      "name": "test_calculator",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 13,
+        "line_start": 1,
+        "source_path": "tests/test_calculator.py"
+      },
+      "qualified_name": "tests.test_calculator"
+    },
+    {
+      "attributes": {
+        "bases": [],
+        "decorators": [
+          "dataclass(frozen=True)"
+        ],
+        "docstring_summary": "Single purchasable line item."
+      },
+      "id": "sym:py:src/sample_lib/calculator.py:LineItem",
+      "kind": "Class",
+      "name": "LineItem",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 17,
+        "line_start": 12,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "qualified_name": "sample_lib.calculator.LineItem"
+    },
+    {
+      "attributes": {
+        "decorators": [],
+        "docstring_summary": "Calculate net checkout total including item quantities and applicable tax.",
+        "is_async": false,
+        "signature": "(items: list[LineItem], tax_rate: Decimal = Decimal('0.00')) -> Decimal"
+      },
+      "id": "sym:py:src/sample_lib/calculator.py:calculate_total",
+      "kind": "Function",
+      "name": "calculate_total",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 24,
+        "line_start": 20,
+        "source_path": "src/sample_lib/calculator.py"
+      },
+      "qualified_name": "sample_lib.calculator.calculate_total"
+    },
+    {
+      "attributes": {
+        "decorators": [],
+        "docstring_summary": "Round a decimal value to two decimal places using half-up rounding.",
+        "is_async": false,
+        "signature": "(value: Decimal) -> Decimal"
+      },
+      "id": "sym:py:src/sample_lib/utils.py:round_currency",
+      "kind": "Function",
+      "name": "round_currency",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 10,
+        "line_start": 8,
+        "source_path": "src/sample_lib/utils.py"
+      },
+      "qualified_name": "sample_lib.utils.round_currency"
+    },
+    {
+      "attributes": {
+        "decorators": [],
+        "docstring_summary": "Verify subtotal and tax calculation.",
+        "is_async": false,
+        "signature": "() -> None"
+      },
+      "id": "sym:py:tests/test_calculator.py:test_calculate_total_with_tax",
+      "kind": "Test",
+      "name": "test_calculate_total_with_tax",
+      "provenance": {
+        "confidence": "high",
+        "evidence_kind": "deterministic",
+        "extractor": "python_ast:1.0",
+        "line_end": 13,
+        "line_start": 10,
+        "source_path": "tests/test_calculator.py"
+      },
+      "qualified_name": "tests.test_calculator.test_calculate_total_with_tax"
+    }
+  ],
+  "repository_id": "repo:sha256:d0471a89a53b523d38040df27d53375c",
+  "schema_version": "1.0.0"
+}
