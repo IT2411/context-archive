@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from context_archive.adapters.python_ast import PythonAstAdapter
+from context_archive.adapters.pipeline import extract_all_adapters
 from context_archive.model.graph import CanonicalGraph
 
 if TYPE_CHECKING:
@@ -23,6 +23,8 @@ REVERSE_DEPENDENCY_EDGE_KINDS = frozenset(
         "CONSUMES",
         "VALIDATES_WITH",
         "DEPENDS_ON",
+        "READS",
+        "WRITES",
     }
 )
 
@@ -62,7 +64,7 @@ def compute_invalidated_paths(
 
     dependent_paths: set[str] = set(changed_paths)
     frontier = set(affected_node_ids)
-    for _ in range(2):
+    for _ in range(3):
         next_frontier: set[str] = set()
         for edge in previous_graph.edges:
             if edge.kind in REVERSE_DEPENDENCY_EDGE_KINDS and edge.target_id in frontier:
@@ -96,12 +98,16 @@ def refresh_graph_incrementally(
 
     Guarantees 100% semantic equivalence with a clean L3 full rebuild (FR-10).
     """
-    adapter = PythonAstAdapter()
-    py_files = [f for f in live_files if adapter.can_handle(f)]
-    total_py = max(1, len(py_files))
+    source_files = [
+        f
+        for f in live_files
+        if f.language in ("python", "typescript", "javascript")
+        and f.category in ("source_code", "test")
+    ]
+    total_src = max(1, len(source_files))
 
     if requested_level == "L3":
-        full_res = adapter.extract_repository(repo_root, py_files)
+        full_res = extract_all_adapters(repo_root, source_files)
         full_graph = CanonicalGraph.build(
             repository_id=previous_graph.repository_id,
             base_snapshot_id=base_snapshot_id,
@@ -114,7 +120,7 @@ def refresh_graph_incrementally(
             effective_level="L3",
             escalated_to_l3=False,
             escalation_reason=None,
-            invalidated_paths=tuple(sorted(f.path for f in py_files)),
+            invalidated_paths=tuple(sorted(f.path for f in source_files)),
             graph=full_graph,
         )
 
@@ -123,19 +129,19 @@ def refresh_graph_incrementally(
     if escalation_reason is None and any_deleted_or_renamed:
         escalation_reason = "File deletion or rename requires full symbol table relinking."
 
-    if escalation_reason is None and (len(invalidated_paths) / total_py) > 0.30 and total_py >= 5:
+    if escalation_reason is None and (len(invalidated_paths) / total_src) > 0.30 and total_src >= 5:
         escalation_reason = "More than 30% of repository source files invalidated."
 
-    ast_res = adapter.extract_repository(repo_root, py_files)
+    all_res = extract_all_adapters(repo_root, source_files)
 
     if escalation_reason is not None:
         rebuilt_graph = CanonicalGraph.build(
             repository_id=previous_graph.repository_id,
             base_snapshot_id=base_snapshot_id,
             applied_journal_cursor=applied_journal_cursor,
-            nodes=ast_res.nodes,
-            edges=ast_res.edges,
-            diagnostics=ast_res.diagnostics,
+            nodes=all_res.nodes,
+            edges=all_res.edges,
+            diagnostics=all_res.diagnostics,
         )
         return GraphInvalidationResult(
             effective_level="L3",
@@ -148,17 +154,17 @@ def refresh_graph_incrementally(
     unchanged_nodes = [
         n for n in previous_graph.nodes if n.provenance.source_path not in invalidated_paths
     ]
-    refreshed_nodes = [n for n in ast_res.nodes if n.provenance.source_path in invalidated_paths]
+    refreshed_nodes = [n for n in all_res.nodes if n.provenance.source_path in invalidated_paths]
 
     unchanged_edges = [
         e for e in previous_graph.edges if e.provenance.source_path not in invalidated_paths
     ]
-    refreshed_edges = [e for e in ast_res.edges if e.provenance.source_path in invalidated_paths]
+    refreshed_edges = [e for e in all_res.edges if e.provenance.source_path in invalidated_paths]
 
     unchanged_diags = [
         d for d in previous_graph.diagnostics if (d.source_path or "") not in invalidated_paths
     ]
-    refreshed_diags = [d for d in ast_res.diagnostics if (d.source_path or "") in invalidated_paths]
+    refreshed_diags = [d for d in all_res.diagnostics if (d.source_path or "") in invalidated_paths]
 
     spliced_graph = CanonicalGraph.build(
         repository_id=previous_graph.repository_id,

@@ -6,7 +6,8 @@ import ast
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from context_archive.adapters.python_ast import PythonAstAdapter, resolve_relative_module
+from context_archive.adapters.pipeline import extract_all_adapters
+from context_archive.adapters.python_ast import resolve_relative_module
 from context_archive.scanner.walker import MANIFEST_FILENAMES
 from context_archive.state.journal import (
     ChangeCategory,
@@ -82,20 +83,19 @@ def _extract_internal_import_targets(
     return resolved_targets
 
 
-def _analyze_modified_python_file(
+def _analyze_modified_source_file(
     repo_root: Path,
     scanned_file: ScannedFile,
     previous_graph: CanonicalGraph,
 ) -> tuple[list[str], bool]:
-    """Compare a modified Python file against previous_graph.
+    """Compare a modified source file against previous_graph.
 
     Returns `(modified_symbol_ids, has_structural_or_signature_change)`.
     """
-    adapter = PythonAstAdapter()
-    if not adapter.can_handle(scanned_file):
+    if scanned_file.language not in ("python", "typescript", "javascript"):
         return [], False
 
-    res = adapter.extract_repository(repo_root, [scanned_file])
+    res = extract_all_adapters(repo_root, [scanned_file])
     if any(d.code == "python_syntax_error" for d in res.diagnostics):
         return [], True
 
@@ -111,19 +111,21 @@ def _analyze_modified_python_file(
         if n.provenance.source_path == rel_path and n.kind not in ("File", "Module")
     }
 
-    old_import_targets = {
-        e.target_id
-        for e in previous_graph.edges
-        if e.provenance.source_path == rel_path and e.kind == "IMPORTS"
-    }
-    new_import_targets = _extract_internal_import_targets(repo_root, rel_path, previous_graph)
-
     structural_change = False
-    if (
-        set(old_nodes.keys()) != set(new_nodes.keys())
-        or new_import_targets is None
-        or old_import_targets != new_import_targets
-    ):
+    if scanned_file.language == "python":
+        old_import_targets = {
+            e.target_id
+            for e in previous_graph.edges
+            if e.provenance.source_path == rel_path and e.kind == "IMPORTS"
+        }
+        new_import_targets = _extract_internal_import_targets(repo_root, rel_path, previous_graph)
+        if new_import_targets is None or old_import_targets != new_import_targets:
+            structural_change = True
+    else:
+        # TypeScript/JS modifications always refresh partial graph (L2)
+        structural_change = True
+
+    if set(old_nodes.keys()) != set(new_nodes.keys()):
         structural_change = True
 
     modified_symbols: list[str] = []
@@ -274,8 +276,8 @@ def detect_repository_changes(
     for mod_path in raw_modified:
         sf = scan_by_path.get(mod_path)
         mod_syms: list[str] = []
-        if sf is not None and sf.language == "python":
-            mod_syms, sig_changed = _analyze_modified_python_file(repo_root, sf, previous_graph)
+        if sf is not None and sf.language in ("python", "typescript", "javascript"):
+            mod_syms, sig_changed = _analyze_modified_source_file(repo_root, sf, previous_graph)
             if sig_changed:
                 has_signature_change = True
         file_changes.append(

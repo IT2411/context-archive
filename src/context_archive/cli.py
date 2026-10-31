@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 import typer
 
 from context_archive import __version__
-from context_archive.adapters.python_ast import PythonAstAdapter
+from context_archive.adapters.pipeline import extract_all_adapters
 from context_archive.config import CtxaConfig, load_config, render_default_ctxa_toml
 from context_archive.context.assembler import (
     filter_unincorporated_records,
@@ -172,8 +172,8 @@ def execute_full_handoff(
         cache = ContextSqliteCache(context_dir)
         cache.store_fingerprints(scan_report.file_fingerprints())
 
-        py_adapter = PythonAstAdapter()
-        ast_res = py_adapter.extract_repository(repo_root, scan_report.files)
+        pass
+        ast_res = extract_all_adapters(repo_root, scan_report.files)
 
         syntax_error_count = sum(1 for d in ast_res.diagnostics if d.code == "python_syntax_error")
         total_failed = scan_report.summary.files_failed + syntax_error_count
@@ -418,8 +418,8 @@ def execute_repository_diff(
     baseline_snapshot = load_snapshot(context_dir, target_snap_id)
 
     live_scan = scan_repository(repo_root, config)
-    py_adapter = PythonAstAdapter()
-    ast_res = py_adapter.extract_repository(repo_root, live_scan.files)
+    pass
+    ast_res = extract_all_adapters(repo_root, live_scan.files)
     live_graph = CanonicalGraph.build(
         repository_id=live_scan.repository_id,
         base_snapshot_id=target_snap_id,
