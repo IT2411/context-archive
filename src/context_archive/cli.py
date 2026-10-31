@@ -15,6 +15,7 @@ from context_archive.config import CtxaConfig, load_config, render_default_ctxa_
 from context_archive.context.assembler import (
     filter_unincorporated_records,
 )
+from context_archive.context.compiler import compile_task_context
 from context_archive.context.differ import (
     SemanticDiffReport,
     compute_downstream_impacts,
@@ -739,21 +740,38 @@ def context(
 ) -> None:
     """Compile a ranked, token-budgeted context packet for a specific task."""
     if not task.strip():
-        _handle_cli_error(ConfigError("Task description cannot be empty."))
+        _handle_cli_error(
+            ConfigError("Task description cannot be empty."),
+            as_json=(output_format == "json"),
+        )
     if output_format not in VALID_CONTEXT_FORMATS:
         _handle_cli_error(
             ConfigError(f"Unsupported --format '{output_format}'. Expected md or json.")
         )
-    overrides: dict[str, Any] = {
-        "context": {
-            "default_max_tokens": max_tokens,
-            "default_tokenizer": tokenizer,
-        }
-    }
-    if output is not None:
-        overrides["context"]["output_path"] = output.as_posix()
-    repo_root, _ = _resolve_target_and_config(path, cli_overrides=overrides)
-    typer.echo(f"Compiled task context for '{task}' in {repo_root} (max_tokens={max_tokens})")
+    repo_root, cfg = _resolve_target_and_config(path, as_json=(output_format == "json"))
+    try:
+        if not (repo_root / ".context" / "manifest.json").is_file():
+            execute_full_handoff(repo_root, cfg)
+
+        packet = compile_task_context(
+            repo_root=repo_root,
+            config=cfg,
+            task=task,
+            max_tokens=max_tokens,
+            tokenizer_spec=tokenizer,
+        )
+        rendered = packet.to_deterministic_json() if output_format == "json" else packet.markdown
+        if output is not None:
+            out_path = output if output.is_absolute() else (repo_root / output)
+            atomic_write_text(out_path, rendered)
+            typer.echo(
+                f"Compiled task context to {out_path} "
+                f"({packet.estimated_tokens}/{packet.max_tokens} tokens)"
+            )
+        else:
+            typer.echo(rendered, nl=False)
+    except CtxaError as exc:
+        _handle_cli_error(exc, as_json=(output_format == "json"))
 
 
 @app.command()
