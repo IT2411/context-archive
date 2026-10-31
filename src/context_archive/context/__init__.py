@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from context_archive.context.assembler import (
+    EffectiveContext,
+    assemble_effective_context,
+    filter_unincorporated_records,
+    validate_journal_lineage,
+)
 from context_archive.context.differ import (
     DownstreamImpactItem,
     SemanticDiffReport,
@@ -17,11 +23,15 @@ from context_archive.context.verifier import (
 
 __all__ = [
     "DownstreamImpactItem",
+    "EffectiveContext",
     "SemanticDiffReport",
     "SymbolDiffItem",
     "VerificationReport",
     "VerificationStatus",
+    "assemble_effective_context",
     "compute_downstream_impacts",
     "compute_semantic_diff",
+    "filter_unincorporated_records",
+    "validate_journal_lineage",
     "verify_repository_freshness",
 ]

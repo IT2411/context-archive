@@ -12,6 +12,9 @@ import typer
 from context_archive import __version__
 from context_archive.adapters.python_ast import PythonAstAdapter
 from context_archive.config import CtxaConfig, load_config, render_default_ctxa_toml
+from context_archive.context.assembler import (
+    filter_unincorporated_records,
+)
 from context_archive.context.differ import (
     SemanticDiffReport,
     compute_downstream_impacts,
@@ -33,6 +36,8 @@ from context_archive.renderers.markdown import render_project_context_markdown
 from context_archive.renderers.mermaid import render_diff_mermaid, render_graph_mermaid
 from context_archive.scanner.discovery import discover_repo_root
 from context_archive.scanner.walker import scan_repository
+from context_archive.state.cache import ContextSqliteCache
+from context_archive.state.compactor import compact_snapshot
 from context_archive.state.detector import detect_repository_changes
 from context_archive.state.invalidator import refresh_graph_incrementally
 from context_archive.state.journal import (
@@ -43,7 +48,12 @@ from context_archive.state.journal import (
     generate_next_change_id,
     read_all_journal_records,
 )
-from context_archive.state.snapshot import Snapshot, load_snapshot, write_snapshot
+from context_archive.state.snapshot import (
+    Snapshot,
+    format_snapshot_id,
+    load_snapshot,
+    write_snapshot,
+)
 
 app = typer.Typer(
     name="ctxa",
@@ -87,12 +97,7 @@ def _format_recent_journal_lines(
     incorporated_cursor: str | None,
 ) -> list[str]:
     """Render unincorporated journal entries as Markdown bullets for Section 8."""
-    unincorporated = [
-        rec
-        for rec in records
-        if rec.record_status == "active"
-        and (incorporated_cursor is None or rec.change_id > incorporated_cursor)
-    ]
+    unincorporated = filter_unincorporated_records(records, incorporated_cursor)
     if not unincorporated:
         return []
 
@@ -113,6 +118,7 @@ def execute_full_handoff(
     *,
     deterministic: bool = False,
     snapshot_id: str | None = None,
+    force_new_checkpoint: bool = False,
     write_default_ctxa_toml: bool = False,
     force_ctxa_toml: bool = False,
 ) -> HandoffArtifacts:
@@ -138,26 +144,33 @@ def execute_full_handoff(
         if (context_dir / "manifest.json").is_file():
             existing_manifest = load_manifest(context_dir)
 
-        effective_snapshot_id = snapshot_id or (
-            existing_manifest.state_cursors.latest_snapshot_id
-            if existing_manifest is not None
-            else "snapshot-0001"
-        )
-        inc_cursor = (
-            existing_manifest.state_cursors.snapshot_incorporated_journal_cursor
-            if existing_manifest is not None
-            else None
-        )
-
         journal_records = read_all_journal_records(context_dir)
         head_cursor = journal_records[-1].change_id if journal_records else None
-        uninc_records = [
-            r
-            for r in journal_records
-            if r.record_status == "active" and (inc_cursor is None or r.change_id > inc_cursor)
-        ]
+
+        if force_new_checkpoint and existing_manifest is not None:
+            cur_snap = existing_manifest.state_cursors.latest_snapshot_id
+            parts = cur_snap.split("-")
+            next_num = int(parts[1]) + 1 if len(parts) == 2 and parts[1].isdigit() else 2
+            effective_snapshot_id = snapshot_id or format_snapshot_id(next_num)
+            inc_cursor = head_cursor
+        else:
+            effective_snapshot_id = snapshot_id or (
+                existing_manifest.state_cursors.latest_snapshot_id
+                if existing_manifest is not None
+                else "snapshot-0001"
+            )
+            inc_cursor = (
+                existing_manifest.state_cursors.snapshot_incorporated_journal_cursor
+                if existing_manifest is not None
+                else None
+            )
+
+        uninc_records = filter_unincorporated_records(journal_records, inc_cursor)
 
         scan_report = scan_repository(repo_root, config)
+        cache = ContextSqliteCache(context_dir)
+        cache.store_fingerprints(scan_report.file_fingerprints())
+
         py_adapter = PythonAstAdapter()
         ast_res = py_adapter.extract_repository(repo_root, scan_report.files)
 
@@ -174,12 +187,27 @@ def execute_full_handoff(
         )
 
         snapshot_file = context_dir / "snapshots" / f"{effective_snapshot_id}.json"
-        if not snapshot_file.is_file() or snapshot_id is not None:
-            snapshot = Snapshot.create_initial(
-                scan_report=scan_report,
-                graph=graph,
+        if not snapshot_file.is_file() or snapshot_id is not None or force_new_checkpoint:
+            parent_snap_id = (
+                existing_manifest.state_cursors.latest_snapshot_id
+                if (existing_manifest is not None and force_new_checkpoint)
+                else None
+            )
+            snapshot = Snapshot(
                 snapshot_id=effective_snapshot_id,
-                deterministic=deterministic,
+                parent_snapshot_id=parent_snap_id,
+                repository_id=scan_report.repository_id,
+                created_at=(
+                    "1970-01-01T00:00:00Z"
+                    if deterministic
+                    else Manifest.from_scan_report(scan_report).generated_at
+                ),
+                config_fingerprint=scan_report.config_fingerprint,
+                git_state=scan_report.git_state,
+                incorporated_journal_cursor=inc_cursor,
+                incorporated_change_ids=tuple(r.change_id for r in journal_records),
+                file_fingerprints=scan_report.file_fingerprints(),
+                graph=graph,
             )
             write_snapshot(context_dir, snapshot)
         else:
@@ -256,6 +284,8 @@ def execute_incremental_update(
 
         existing_records = read_all_journal_records(context_dir)
         live_scan = scan_repository(repo_root, config)
+        cache = ContextSqliteCache(context_dir)
+        cache.store_fingerprints(live_scan.file_fingerprints())
 
         detection = detect_repository_changes(
             repo_root=repo_root,
@@ -341,11 +371,7 @@ def execute_incremental_update(
 
         inc_cursor = manifest.state_cursors.snapshot_incorporated_journal_cursor
         all_records = [*existing_records, record]
-        uninc_count = sum(
-            1
-            for r in all_records
-            if r.record_status == "active" and (inc_cursor is None or r.change_id > inc_cursor)
-        )
+        uninc_records = filter_unincorporated_records(all_records, inc_cursor)
 
         updated_manifest = Manifest(
             schema_version=manifest.schema_version,
@@ -358,7 +384,7 @@ def execute_incremental_update(
                 latest_snapshot_id=manifest.state_cursors.latest_snapshot_id,
                 snapshot_incorporated_journal_cursor=inc_cursor,
                 head_journal_cursor=change_id,
-                unincorporated_record_count=uninc_count,
+                unincorporated_record_count=len(uninc_records),
                 notes_fingerprint=manifest.state_cursors.notes_fingerprint,
             ),
             scan_summary=live_scan.summary,
@@ -405,10 +431,9 @@ def execute_repository_diff(
     records = read_all_journal_records(context_dir)
     inc_cursor = baseline_snapshot.incorporated_journal_cursor
     body_modified: set[str] = set()
-    for rec in records:
-        if rec.record_status == "active" and (inc_cursor is None or rec.change_id > inc_cursor):
-            for fc in rec.file_changes:
-                body_modified.update(fc.modified_symbols)
+    for rec in filter_unincorporated_records(records, inc_cursor):
+        for fc in rec.file_changes:
+            body_modified.update(fc.modified_symbols)
 
     return compute_semantic_diff(
         baseline_id=target_snap_id,
@@ -613,12 +638,12 @@ def handoff(
     if output is not None:
         overrides = {"context": {"output_path": output.as_posix()}}
     repo_root, cfg = _resolve_target_and_config(path, cli_overrides=overrides, as_json=as_json)
-    _ = full
     try:
         artifacts = execute_full_handoff(
             repo_root,
             cfg,
             deterministic=deterministic,
+            force_new_checkpoint=full,
         )
         if as_json:
             typer.echo(
@@ -734,23 +759,37 @@ def context(
 @app.command()
 def compact(
     path: Path = typer.Argument(Path(), help="Target repository path."),
+    deterministic: bool = typer.Option(
+        False, "--deterministic", help="Normalize volatile timestamps."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Fold unincorporated journal entries into a new immutable snapshot checkpoint."""
     repo_root, cfg = _resolve_target_and_config(path, as_json=as_json)
-    if as_json:
-        typer.echo(
-            json.dumps(
-                {
-                    "command": "compact",
-                    "repo_root": repo_root.as_posix(),
-                    "config_fingerprint": cfg.fingerprint(),
-                },
-                sort_keys=True,
+    try:
+        res = compact_snapshot(repo_root, cfg, deterministic=deterministic)
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    {
+                        "command": "compact",
+                        "repo_root": repo_root.as_posix(),
+                        "previous_snapshot_id": res.previous_snapshot_id,
+                        "new_snapshot_id": res.new_snapshot_id,
+                        "compacted_record_count": res.compacted_record_count,
+                        "incorporated_journal_cursor": res.incorporated_journal_cursor,
+                        "config_fingerprint": cfg.fingerprint(),
+                    },
+                    sort_keys=True,
+                )
             )
-        )
-    else:
-        typer.echo(f"Compact ready for {repo_root}")
+        else:
+            typer.echo(
+                f"Compacted {res.compacted_record_count} journal record(s) into "
+                f"{res.new_snapshot_id} in {repo_root}"
+            )
+    except CtxaError as exc:
+        _handle_cli_error(exc, as_json=as_json)
 
 
 @app.command()
@@ -764,7 +803,12 @@ def rebuild(
     """Force a clean L3 full rebuild of the canonical graph and checkpoint."""
     repo_root, cfg = _resolve_target_and_config(path, as_json=as_json)
     try:
-        artifacts = execute_full_handoff(repo_root, cfg, deterministic=deterministic)
+        artifacts = execute_full_handoff(
+            repo_root,
+            cfg,
+            deterministic=deterministic,
+            force_new_checkpoint=True,
+        )
         if as_json:
             typer.echo(
                 json.dumps(

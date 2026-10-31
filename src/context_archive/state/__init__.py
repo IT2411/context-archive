@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from context_archive.state.cache import ContextSqliteCache
+from context_archive.state.compactor import CompactionResult, compact_snapshot
 from context_archive.state.detector import (
     ChangeDetectionResult,
     detect_repository_changes,
@@ -34,6 +36,8 @@ from context_archive.state.snapshot import (
 __all__ = [
     "ChangeCategory",
     "ChangeDetectionResult",
+    "CompactionResult",
+    "ContextSqliteCache",
     "GraphInvalidationResult",
     "JournalFileChange",
     "JournalImpactItem",
@@ -43,6 +47,7 @@ __all__ = [
     "Snapshot",
     "UpdateLevel",
     "append_journal_record",
+    "compact_snapshot",
     "compute_invalidated_paths",
     "compute_tree_fingerprint",
     "detect_repository_changes",

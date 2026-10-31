@@ -158,9 +158,7 @@ def refresh_graph_incrementally(
     unchanged_diags = [
         d for d in previous_graph.diagnostics if (d.source_path or "") not in invalidated_paths
     ]
-    refreshed_diags = [
-        d for d in ast_res.diagnostics if (d.source_path or "") in invalidated_paths
-    ]
+    refreshed_diags = [d for d in ast_res.diagnostics if (d.source_path or "") in invalidated_paths]
 
     spliced_graph = CanonicalGraph.build(
         repository_id=previous_graph.repository_id,
