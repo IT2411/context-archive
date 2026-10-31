@@ -59,6 +59,17 @@ def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
         return None
 
 
+def _is_self_managed_context_path(rel_path: str) -> bool:
+    """Return True if a Git status path belongs to ctxa's own output artifacts."""
+    cleaned = rel_path.strip().strip('"')
+    return (
+        cleaned == "PROJECT_CONTEXT.md"
+        or cleaned == "PROJECT_CONTEXT.md.bak"
+        or cleaned == ".context"
+        or cleaned.startswith(".context/")
+    )
+
+
 def extract_git_state(repo_root: Path) -> GitState:
     """Extract current Git commit, branch, dirty working tree status, and sanitized remote."""
     status_proc = _run_git(
@@ -85,9 +96,13 @@ def extract_git_state(repo_root: Path) -> GitState:
             head = line[len("# branch.head ") :].strip()
             branch = "DETACHED_HEAD" if head == "(detached)" else head
         elif line.startswith(("1 ", "2 ", "u ")):
-            staged_or_unstaged += 1
+            path_part = line.split("\t")[0].split(" ", 8)[-1]
+            if not _is_self_managed_context_path(path_part):
+                staged_or_unstaged += 1
         elif line.startswith("? "):
-            untracked += 1
+            path_part = line[2:].strip()
+            if not _is_self_managed_context_path(path_part):
+                untracked += 1
 
     remote_proc = _run_git(repo_root, ["config", "--get", "remote.origin.url"])
     remote_url: str | None = None

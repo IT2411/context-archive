@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
@@ -13,22 +12,19 @@ import typer
 from context_archive import __version__
 from context_archive.adapters.python_ast import PythonAstAdapter
 from context_archive.config import CtxaConfig, load_config, render_default_ctxa_toml
+from context_archive.context.verifier import verify_repository_freshness
 from context_archive.exceptions import (
     ConfigError,
     CtxaError,
     CtxaWarningError,
     ExitCode,
-    IntegrityError,
 )
 from context_archive.lock import ContextLock, atomic_write_text
 from context_archive.model.graph import CanonicalGraph
 from context_archive.model.manifest import Manifest, load_manifest, write_manifest
+from context_archive.notes.manager import append_human_note, sync_manual_notes
 from context_archive.renderers.json_exporter import export_canonical_json
-from context_archive.renderers.markdown import (
-    DEFAULT_MANUAL_NOTES_BLOCK,
-    MANUAL_END,
-    render_project_context_markdown,
-)
+from context_archive.renderers.markdown import render_project_context_markdown
 from context_archive.scanner.discovery import discover_repo_root
 from context_archive.scanner.walker import scan_repository
 from context_archive.state.snapshot import Snapshot, write_snapshot
@@ -46,11 +42,6 @@ VALID_DIFF_FORMATS = frozenset({"text", "json", "mermaid"})
 VALID_CONTEXT_FORMATS = frozenset({"md", "json"})
 VALID_EXPORT_FORMATS = frozenset({"json", "mermaid"})
 
-_MANUAL_EXTRACT_RE = re.compile(
-    r"<!--\s*CTXA:MANUAL:START[^>]*-->\n?(.*?)\n?<!--\s*CTXA:MANUAL:END\s*-->",
-    re.DOTALL,
-)
-
 
 @dataclass(frozen=True)
 class HandoffArtifacts:
@@ -62,33 +53,6 @@ class HandoffArtifacts:
     graph: CanonicalGraph
     snapshot: Snapshot
     has_warnings: bool
-
-
-def _extract_existing_manual_notes(md_path: Path, notes_path: Path) -> str:
-    """Read preserved manual notes from existing PROJECT_CONTEXT.md or .context/notes.md."""
-    if md_path.is_file():
-        raw_md = md_path.read_text(encoding="utf-8", errors="replace")
-        start_count = raw_md.count("<!-- CTXA:MANUAL:START")
-        end_count = raw_md.count(MANUAL_END)
-        if start_count > 0 or end_count > 0:
-            match = _MANUAL_EXTRACT_RE.search(raw_md)
-            if start_count != 1 or end_count != 1 or match is None:
-                bak_path = md_path.with_name(f"{md_path.name}.bak")
-                atomic_write_text(bak_path, raw_md)
-                raise IntegrityError(
-                    f"Corrupted CTXA:MANUAL sentinel markers in '{md_path}'. "
-                    f"Backed up existing file to '{bak_path.name}' and aborted overwrite."
-                )
-            extracted = match.group(1).strip()
-            if extracted:
-                return extracted
-
-    if notes_path.is_file():
-        notes_text = notes_path.read_text(encoding="utf-8", errors="replace").strip()
-        if notes_text:
-            return notes_text
-
-    return DEFAULT_MANUAL_NOTES_BLOCK
 
 
 def execute_full_handoff(
@@ -116,8 +80,7 @@ def execute_full_handoff(
             if force_ctxa_toml or not ctxa_toml.exists():
                 atomic_write_text(ctxa_toml, render_default_ctxa_toml(config))
 
-        manual_notes = _extract_existing_manual_notes(output_md_path, notes_path)
-        atomic_write_text(notes_path, manual_notes + "\n")
+        manual_notes = sync_manual_notes(md_path=output_md_path, notes_path=notes_path)
 
         scan_report = scan_repository(repo_root, config)
         py_adapter = PythonAstAdapter()
@@ -309,19 +272,28 @@ def note(
         help="Note category: decision, constraint, issue, question, next_step.",
     ),
     scope: str | None = typer.Option(None, "--scope", "-s", help="File path or symbol scope."),
+    deterministic: bool = typer.Option(
+        False, "--deterministic", help="Normalize volatile timestamps."
+    ),
 ) -> None:
     """Record a durable human note or architectural decision."""
-    if not text.strip():
-        _handle_cli_error(ConfigError("Note text cannot be empty."))
-    if note_type not in VALID_NOTE_TYPES:
-        _handle_cli_error(
-            ConfigError(
-                f"Unsupported --type '{note_type}'. Expected one of: "
-                f"{', '.join(sorted(VALID_NOTE_TYPES))}."
+    repo_root, cfg = _resolve_target_and_config(path)
+    output_rel = Path(cfg.context.output_path)
+    output_md_path = output_rel if output_rel.is_absolute() else (repo_root / output_rel)
+    context_dir = repo_root / ".context"
+    try:
+        with ContextLock(context_dir):
+            record = append_human_note(
+                repo_root=repo_root,
+                output_md_path=output_md_path,
+                text=text,
+                note_type=note_type,
+                scope=scope,
+                deterministic=deterministic,
             )
-        )
-    repo_root, _ = _resolve_target_and_config(path)
-    typer.echo(f"Recorded {note_type} note in {repo_root} (scope={scope or 'global'})")
+        typer.echo(f"Recorded {record.note_type} note in {repo_root} (scope={record.scope})")
+    except CtxaError as exc:
+        _handle_cli_error(exc)
 
 
 @app.command()
@@ -385,19 +357,18 @@ def verify(
     """Verify whether PROJECT_CONTEXT.md and .context/ match the current working tree."""
     _ = strict
     repo_root, cfg = _resolve_target_and_config(path, as_json=as_json)
+    report = verify_repository_freshness(repo_root, cfg)
     if as_json:
-        typer.echo(
-            json.dumps(
-                {
-                    "command": "verify",
-                    "repo_root": repo_root.as_posix(),
-                    "config_fingerprint": cfg.fingerprint(),
-                },
-                sort_keys=True,
-            )
-        )
+        payload = report.model_dump(mode="json")
+        payload["command"] = "verify"
+        payload["config_fingerprint"] = cfg.fingerprint()
+        typer.echo(json.dumps(payload, sort_keys=True))
     else:
-        typer.echo(f"Verify ready for {repo_root}")
+        typer.echo(f"Verification status: {report.status} ({repo_root})")
+        for reason in report.reasons:
+            typer.echo(f"  - {reason}")
+    if report.exit_code != int(ExitCode.SUCCESS):
+        raise typer.Exit(report.exit_code)
 
 
 @app.command()
