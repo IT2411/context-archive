@@ -21,13 +21,22 @@ from context_archive.exceptions import (
 )
 from context_archive.lock import ContextLock, atomic_write_text
 from context_archive.model.graph import CanonicalGraph
-from context_archive.model.manifest import Manifest, load_manifest, write_manifest
+from context_archive.model.manifest import Manifest, StateCursors, load_manifest, write_manifest
 from context_archive.notes.manager import append_human_note, sync_manual_notes
 from context_archive.renderers.json_exporter import export_canonical_json
 from context_archive.renderers.markdown import render_project_context_markdown
 from context_archive.scanner.discovery import discover_repo_root
 from context_archive.scanner.walker import scan_repository
-from context_archive.state.snapshot import Snapshot, write_snapshot
+from context_archive.state.detector import detect_repository_changes
+from context_archive.state.journal import (
+    JournalRecord,
+    JournalSourceState,
+    append_journal_record,
+    compute_tree_fingerprint,
+    generate_next_change_id,
+    read_all_journal_records,
+)
+from context_archive.state.snapshot import Snapshot, load_snapshot, write_snapshot
 
 app = typer.Typer(
     name="ctxa",
@@ -55,12 +64,48 @@ class HandoffArtifacts:
     has_warnings: bool
 
 
+@dataclass(frozen=True)
+class IncrementalUpdateResult:
+    """Result of executing `ctxa update`."""
+
+    repo_root: Path
+    is_noop: bool
+    update_level: str
+    record: JournalRecord | None
+    manifest: Manifest
+
+
+def _format_recent_journal_lines(
+    records: list[JournalRecord],
+    incorporated_cursor: str | None,
+) -> list[str]:
+    """Render unincorporated journal entries as Markdown bullets for Section 8."""
+    unincorporated = [
+        rec
+        for rec in records
+        if rec.record_status == "active"
+        and (incorporated_cursor is None or rec.change_id > incorporated_cursor)
+    ]
+    if not unincorporated:
+        return []
+
+    lines: list[str] = []
+    for rec in unincorporated:
+        files_str = ", ".join(f"`{fc.path}` ({fc.operation})" for fc in rec.file_changes)
+        files_part = f" — Files: {files_str}" if files_str else ""
+        lines.append(
+            f"- **`{rec.change_id}`** [`{rec.update_level}` | `{rec.category}` | "
+            f"`origin: {rec.intent.origin}`]: {rec.intent.summary}{files_part}"
+        )
+    return lines
+
+
 def execute_full_handoff(
     repo_root: Path,
     config: CtxaConfig,
     *,
     deterministic: bool = False,
-    snapshot_id: str = "snapshot-0001",
+    snapshot_id: str | None = None,
     write_default_ctxa_toml: bool = False,
     force_ctxa_toml: bool = False,
 ) -> HandoffArtifacts:
@@ -82,6 +127,29 @@ def execute_full_handoff(
 
         manual_notes = sync_manual_notes(md_path=output_md_path, notes_path=notes_path)
 
+        existing_manifest: Manifest | None = None
+        if (context_dir / "manifest.json").is_file():
+            existing_manifest = load_manifest(context_dir)
+
+        effective_snapshot_id = snapshot_id or (
+            existing_manifest.state_cursors.latest_snapshot_id
+            if existing_manifest is not None
+            else "snapshot-0001"
+        )
+        inc_cursor = (
+            existing_manifest.state_cursors.snapshot_incorporated_journal_cursor
+            if existing_manifest is not None
+            else None
+        )
+
+        journal_records = read_all_journal_records(context_dir)
+        head_cursor = journal_records[-1].change_id if journal_records else None
+        uninc_records = [
+            r
+            for r in journal_records
+            if r.record_status == "active" and (inc_cursor is None or r.change_id > inc_cursor)
+        ]
+
         scan_report = scan_repository(repo_root, config)
         py_adapter = PythonAstAdapter()
         ast_res = py_adapter.extract_repository(repo_root, scan_report.files)
@@ -91,27 +159,37 @@ def execute_full_handoff(
 
         graph = CanonicalGraph.build(
             repository_id=scan_report.repository_id,
-            base_snapshot_id=snapshot_id,
-            applied_journal_cursor=None,
+            base_snapshot_id=effective_snapshot_id,
+            applied_journal_cursor=head_cursor,
             nodes=ast_res.nodes,
             edges=ast_res.edges,
             diagnostics=ast_res.diagnostics,
         )
 
-        snapshot = Snapshot.create_initial(
-            scan_report=scan_report,
-            graph=graph,
-            snapshot_id=snapshot_id,
-            deterministic=deterministic,
-        )
+        snapshot_file = context_dir / "snapshots" / f"{effective_snapshot_id}.json"
+        if not snapshot_file.is_file() or snapshot_id is not None:
+            snapshot = Snapshot.create_initial(
+                scan_report=scan_report,
+                graph=graph,
+                snapshot_id=effective_snapshot_id,
+                deterministic=deterministic,
+            )
+            write_snapshot(context_dir, snapshot)
+        else:
+            snapshot = load_snapshot(context_dir, effective_snapshot_id)
+
         manifest = Manifest.from_scan_report(
             scan_report,
-            latest_snapshot_id=snapshot_id,
+            latest_snapshot_id=effective_snapshot_id,
+            snapshot_incorporated_journal_cursor=inc_cursor,
+            head_journal_cursor=head_cursor,
+            unincorporated_record_count=len(uninc_records),
             notes_content=manual_notes + "\n",
             deterministic=deterministic,
             files_failed_override=total_failed,
         )
 
+        recent_lines = _format_recent_journal_lines(journal_records, inc_cursor)
         markdown_doc = render_project_context_markdown(
             repo_root=repo_root,
             config=config,
@@ -119,9 +197,9 @@ def execute_full_handoff(
             scan_report=scan_report,
             graph=graph,
             manual_block_content=manual_notes,
+            recent_changes_lines=recent_lines,
         )
 
-        write_snapshot(context_dir, snapshot)
         atomic_write_text(context_dir / "graph.json", graph.to_deterministic_json())
         write_manifest(context_dir, manifest)
         atomic_write_text(output_md_path, markdown_doc)
@@ -136,6 +214,146 @@ def execute_full_handoff(
         graph=graph,
         snapshot=snapshot,
         has_warnings=has_warnings,
+    )
+
+
+def execute_incremental_update(
+    repo_root: Path,
+    config: CtxaConfig,
+    *,
+    requested_level: str = "auto",
+    developer_message: str | None = None,
+    deterministic: bool = False,
+) -> IncrementalUpdateResult:
+    """Detect repository changes, append a JSONL journal record, and update manifest state."""
+    context_dir = repo_root / ".context"
+    manifest_file = context_dir / "manifest.json"
+    graph_file = context_dir / "graph.json"
+
+    if not manifest_file.is_file() or not graph_file.is_file():
+        artifacts = execute_full_handoff(repo_root, config, deterministic=deterministic)
+        return IncrementalUpdateResult(
+            repo_root=repo_root,
+            is_noop=False,
+            update_level="L3",
+            record=None,
+            manifest=artifacts.manifest,
+        )
+
+    with ContextLock(context_dir):
+        manifest = load_manifest(context_dir)
+        raw_graph = json.loads(graph_file.read_text(encoding="utf-8"))
+        previous_graph = CanonicalGraph.model_validate(raw_graph)
+        base_snapshot = load_snapshot(context_dir, manifest.state_cursors.latest_snapshot_id)
+        baseline_tree_fp = compute_tree_fingerprint(base_snapshot.file_fingerprints)
+
+        existing_records = read_all_journal_records(context_dir)
+        live_scan = scan_repository(repo_root, config)
+
+        detection = detect_repository_changes(
+            repo_root=repo_root,
+            manifest=manifest,
+            previous_graph=previous_graph,
+            live_scan=live_scan,
+            existing_records=existing_records,
+            baseline_tree_fingerprint=baseline_tree_fp,
+            requested_level=requested_level,
+            developer_message=developer_message,
+        )
+
+        if detection.is_noop:
+            return IncrementalUpdateResult(
+                repo_root=repo_root,
+                is_noop=True,
+                update_level=detection.update_level,
+                record=None,
+                manifest=manifest,
+            )
+
+        change_id, recorded_at, ym_partition = generate_next_change_id(
+            existing_records,
+            deterministic=deterministic,
+        )
+        parent_change_id = existing_records[-1].change_id if existing_records else None
+
+        record = JournalRecord(
+            change_id=change_id,
+            parent_change_id=parent_change_id,
+            recorded_at=recorded_at,
+            repository_id=manifest.repository_id,
+            base_snapshot_id=manifest.state_cursors.latest_snapshot_id,
+            update_level=detection.update_level,
+            source_state=JournalSourceState(
+                commit_sha=live_scan.git_state.commit_sha,
+                branch=live_scan.git_state.branch,
+                is_dirty=live_scan.git_state.is_dirty,
+                tree_fingerprint=detection.tree_fingerprint,
+            ),
+            category=detection.category,
+            intent=detection.intent,
+            file_changes=detection.file_changes,
+            impact_summary=(),
+            supersedes=(),
+            record_status="active",
+        )
+        append_journal_record(context_dir, record, partition_ym=ym_partition)
+
+        updated_graph = previous_graph
+        if detection.update_level in ("L2", "L3"):
+            py_adapter = PythonAstAdapter()
+            ast_res = py_adapter.extract_repository(repo_root, live_scan.files)
+            updated_graph = CanonicalGraph.build(
+                repository_id=live_scan.repository_id,
+                base_snapshot_id=manifest.state_cursors.latest_snapshot_id,
+                applied_journal_cursor=change_id,
+                nodes=ast_res.nodes,
+                edges=ast_res.edges,
+                diagnostics=ast_res.diagnostics,
+            )
+        else:
+            updated_graph = CanonicalGraph.build(
+                repository_id=previous_graph.repository_id,
+                base_snapshot_id=previous_graph.base_snapshot_id,
+                applied_journal_cursor=change_id,
+                nodes=previous_graph.nodes,
+                edges=previous_graph.edges,
+                diagnostics=previous_graph.diagnostics,
+            )
+        atomic_write_text(graph_file, updated_graph.to_deterministic_json())
+
+        inc_cursor = manifest.state_cursors.snapshot_incorporated_journal_cursor
+        all_records = [*existing_records, record]
+        uninc_count = sum(
+            1
+            for r in all_records
+            if r.record_status == "active" and (inc_cursor is None or r.change_id > inc_cursor)
+        )
+
+        updated_manifest = Manifest(
+            schema_version=manifest.schema_version,
+            tool_version=manifest.tool_version,
+            repository_id=manifest.repository_id,
+            generated_at=recorded_at,
+            config_fingerprint=live_scan.config_fingerprint,
+            git_state=live_scan.git_state,
+            state_cursors=StateCursors(
+                latest_snapshot_id=manifest.state_cursors.latest_snapshot_id,
+                snapshot_incorporated_journal_cursor=inc_cursor,
+                head_journal_cursor=change_id,
+                unincorporated_record_count=uninc_count,
+                notes_fingerprint=manifest.state_cursors.notes_fingerprint,
+            ),
+            scan_summary=live_scan.summary,
+            file_fingerprints=live_scan.file_fingerprints(),
+        )
+        write_manifest(context_dir, updated_manifest)
+
+    return IncrementalUpdateResult(
+        repo_root=repo_root,
+        is_noop=False,
+        update_level=detection.update_level,
+        record=record,
+        manifest=updated_manifest,
     )
 
 
@@ -218,6 +436,7 @@ def init(
             repo_root,
             cfg,
             deterministic=deterministic,
+            snapshot_id="snapshot-0001",
             write_default_ctxa_toml=True,
             force_ctxa_toml=force,
         )
@@ -234,6 +453,9 @@ def update(
     path: Path = typer.Argument(Path(), help="Target repository path."),
     level: str = typer.Option("auto", "--level", help="Update level: auto, l1, l2, or l3."),
     message: str | None = typer.Option(None, "--message", "-m", help="Developer intent summary."),
+    deterministic: bool = typer.Option(
+        False, "--deterministic", help="Normalize volatile timestamps."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Record incremental repository changes into the append-only journal."""
@@ -244,21 +466,37 @@ def update(
             as_json=as_json,
         )
     repo_root, cfg = _resolve_target_and_config(path, as_json=as_json)
-    if as_json:
-        typer.echo(
-            json.dumps(
-                {
-                    "command": "update",
-                    "repo_root": repo_root.as_posix(),
-                    "level": normalized_level,
-                    "message": message,
-                    "config_fingerprint": cfg.fingerprint(),
-                },
-                sort_keys=True,
-            )
+    try:
+        result = execute_incremental_update(
+            repo_root,
+            cfg,
+            requested_level=normalized_level,
+            developer_message=message,
+            deterministic=deterministic,
         )
-    else:
-        typer.echo(f"Update [{normalized_level}] ready for {repo_root}")
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    {
+                        "command": "update",
+                        "repo_root": repo_root.as_posix(),
+                        "is_noop": result.is_noop,
+                        "level": result.update_level,
+                        "change_id": result.record.change_id if result.record else None,
+                        "category": result.record.category if result.record else None,
+                        "message": message,
+                        "config_fingerprint": cfg.fingerprint(),
+                    },
+                    sort_keys=True,
+                )
+            )
+        elif result.is_noop:
+            typer.echo(f"No changes detected in {repo_root} (idempotent no-op).")
+        else:
+            cid = result.record.change_id if result.record else "snapshot-0001"
+            typer.echo(f"Recorded {result.update_level} update ({cid}) in {repo_root}")
+    except CtxaError as exc:
+        _handle_cli_error(exc, as_json=as_json)
 
 
 @app.command()
