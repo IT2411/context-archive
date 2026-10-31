@@ -14,6 +14,7 @@ from context_archive.adapters.pipeline import extract_all_adapters
 from context_archive.config import CtxaConfig, load_config, render_default_ctxa_toml
 from context_archive.context.assembler import (
     filter_unincorporated_records,
+    validate_journal_lineage,
 )
 from context_archive.context.compiler import compile_task_context
 from context_archive.context.differ import (
@@ -21,6 +22,7 @@ from context_archive.context.differ import (
     compute_downstream_impacts,
     compute_semantic_diff,
 )
+from context_archive.context.reconciler import reconcile_divergent_journal
 from context_archive.context.verifier import verify_repository_freshness
 from context_archive.exceptions import (
     ConfigError,
@@ -28,6 +30,7 @@ from context_archive.exceptions import (
     CtxaWarningError,
     ExitCode,
 )
+from context_archive.integrations.mcp_server import run_stdio_mcp_server
 from context_archive.lock import ContextLock, atomic_write_text
 from context_archive.model.graph import CanonicalGraph
 from context_archive.model.manifest import Manifest, StateCursors, load_manifest, write_manifest
@@ -120,6 +123,7 @@ def execute_full_handoff(
     deterministic: bool = False,
     snapshot_id: str | None = None,
     force_new_checkpoint: bool = False,
+    reconcile_branches: bool = False,
     write_default_ctxa_toml: bool = False,
     force_ctxa_toml: bool = False,
 ) -> HandoffArtifacts:
@@ -145,7 +149,11 @@ def execute_full_handoff(
         if (context_dir / "manifest.json").is_file():
             existing_manifest = load_manifest(context_dir)
 
-        journal_records = read_all_journal_records(context_dir)
+        if reconcile_branches:
+            journal_records = reconcile_divergent_journal(context_dir)
+        else:
+            journal_records = read_all_journal_records(context_dir)
+
         head_cursor = journal_records[-1].change_id if journal_records else None
 
         if force_new_checkpoint and existing_manifest is not None:
@@ -172,7 +180,6 @@ def execute_full_handoff(
         cache = ContextSqliteCache(context_dir)
         cache.store_fingerprints(scan_report.file_fingerprints())
 
-        pass
         ast_res = extract_all_adapters(repo_root, scan_report.files)
 
         syntax_error_count = sum(1 for d in ast_res.diagnostics if d.code == "python_syntax_error")
@@ -284,6 +291,9 @@ def execute_incremental_update(
         baseline_tree_fp = compute_tree_fingerprint(base_snapshot.file_fingerprints)
 
         existing_records = read_all_journal_records(context_dir)
+        # Validate lineage before appending so divergent branch merges are caught immediately
+        validate_journal_lineage(existing_records)
+
         live_scan = scan_repository(repo_root, config)
         cache = ContextSqliteCache(context_dir)
         cache.store_fingerprints(live_scan.file_fingerprints())
@@ -418,7 +428,6 @@ def execute_repository_diff(
     baseline_snapshot = load_snapshot(context_dir, target_snap_id)
 
     live_scan = scan_repository(repo_root, config)
-    pass
     ast_res = extract_all_adapters(repo_root, live_scan.files)
     live_graph = CanonicalGraph.build(
         repository_id=live_scan.repository_id,
@@ -818,7 +827,7 @@ def rebuild(
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    """Force a clean L3 full rebuild of the canonical graph and checkpoint."""
+    """Force a clean L3 full rebuild and reconcile any divergent branch journals."""
     repo_root, cfg = _resolve_target_and_config(path, as_json=as_json)
     try:
         artifacts = execute_full_handoff(
@@ -826,6 +835,7 @@ def rebuild(
             cfg,
             deterministic=deterministic,
             force_new_checkpoint=True,
+            reconcile_branches=True,
         )
         if as_json:
             typer.echo(
@@ -896,5 +906,10 @@ def mcp(
     path: Path = typer.Argument(Path(), help="Target repository path."),
 ) -> None:
     """Start the optional read-only Model Context Protocol (MCP) server over stdio."""
-    repo_root, _ = _resolve_target_and_config(path)
-    typer.echo(f"MCP server ready for {repo_root}")
+    repo_root, cfg = _resolve_target_and_config(path)
+    try:
+        if not (repo_root / ".context" / "manifest.json").is_file():
+            execute_full_handoff(repo_root, cfg)
+        run_stdio_mcp_server(repo_root, cfg)
+    except CtxaError as exc:
+        _handle_cli_error(exc)

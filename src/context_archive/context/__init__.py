@@ -21,6 +21,13 @@ from context_archive.context.differ import (
     compute_downstream_impacts,
     compute_semantic_diff,
 )
+from context_archive.context.reconciler import (
+    DivergenceReport,
+    check_for_git_conflict_markers,
+    detect_journal_forks,
+    merge_human_notes_blocks,
+    reconcile_divergent_journal,
+)
 from context_archive.context.tokenizer import (
     HeuristicTokenEstimator,
     TiktokenEstimator,
@@ -34,6 +41,7 @@ from context_archive.context.verifier import (
 )
 
 __all__ = [
+    "DivergenceReport",
     "DownstreamImpactItem",
     "EffectiveContext",
     "HeuristicTokenEstimator",
@@ -46,10 +54,14 @@ __all__ = [
     "VerificationReport",
     "VerificationStatus",
     "assemble_effective_context",
+    "check_for_git_conflict_markers",
     "compile_task_context",
     "compute_downstream_impacts",
     "compute_semantic_diff",
+    "detect_journal_forks",
     "filter_unincorporated_records",
+    "merge_human_notes_blocks",
+    "reconcile_divergent_journal",
     "resolve_token_estimator",
     "tokenize_task_query",
     "validate_journal_lineage",

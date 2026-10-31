@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal
 
-from context_archive.exceptions import ConfigError
+from context_archive.exceptions import ConfigError, IntegrityError
 from context_archive.lock import atomic_write_text
 from context_archive.model.manifest import (
     DETERMINISTIC_TIMESTAMP,
@@ -52,6 +52,8 @@ PLACEHOLDER_BY_HEADING: dict[str, str] = {
     HEADING_NEXT_STEPS: PLACEHOLDER_NEXT_STEPS,
 }
 
+_CONFLICT_PREFIXES = ("<<<<<<<", "=======", ">>>>>>>")
+
 
 @dataclass(frozen=True)
 class NoteRecord:
@@ -88,22 +90,57 @@ def ensure_canonical_notes_sections(raw_notes: str) -> str:
     return "\n".join(lines)
 
 
+def _union_two_notes_blocks(primary: str, secondary: str) -> str:
+    """Union bullets under each canonical section across two note blocks."""
+    headings = (HEADING_DECISIONS, HEADING_ISSUES, HEADING_NEXT_STEPS)
+
+    def _parse(text: str) -> dict[str, list[str]]:
+        sections: dict[str, list[str]] = {h: [] for h in headings}
+        current_h: str | None = None
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped in headings:
+                current_h = stripped
+                continue
+            if current_h is not None and stripped:
+                placeholder = PLACEHOLDER_BY_HEADING[current_h]
+                if stripped != placeholder and stripped not in sections[current_h]:
+                    sections[current_h].append(line)
+        return sections
+
+    sec_a = _parse(primary)
+    sec_b = _parse(secondary)
+
+    out_lines: list[str] = []
+    for idx, h in enumerate(headings):
+        if idx > 0:
+            out_lines.append("")
+        out_lines.append(h)
+        combined = list(sec_a[h])
+        for item in sec_b[h]:
+            if item not in combined:
+                combined.append(item)
+        if combined:
+            out_lines.extend(combined)
+        else:
+            out_lines.append(PLACEHOLDER_BY_HEADING[h])
+    return "\n".join(out_lines)
+
+
 def sync_manual_notes(
     *,
     md_path: Path,
     notes_path: Path,
 ) -> str:
-    """Two-way sync manual notes between PROJECT_CONTEXT.md and .context/notes.md.
-
-    - If `md_path` exists, validates its `CTXA:MANUAL` boundaries (aborting with `.bak`
-      and `IntegrityError` if corrupted).
-    - If the manual block inside `md_path` has been edited relative to the default template
-      or `.context/notes.md`, preserves the user's edits and writes them to `.context/notes.md`.
-    - Otherwise loads `.context/notes.md` or initializes `DEFAULT_MANUAL_NOTES_BLOCK`.
-    """
+    """Two-way sync manual notes between PROJECT_CONTEXT.md and .context/notes.md."""
     notes_from_store: str | None = None
     if notes_path.is_file():
         stored_text = notes_path.read_text(encoding="utf-8", errors="replace").strip()
+        if any(ln.startswith(_CONFLICT_PREFIXES) for ln in stored_text.splitlines()):
+            raise IntegrityError(
+                f"Unresolved Git merge conflict markers found in '{notes_path}'. "
+                "Resolve the conflict markers before running ctxa."
+            )
         if stored_text:
             notes_from_store = ensure_canonical_notes_sections(stored_text)
 
@@ -111,15 +148,16 @@ def sync_manual_notes(
     if md_path.is_file():
         raw_md = md_path.read_text(encoding="utf-8", errors="replace")
         extracted = validate_and_extract_manual_block(raw_md, source_path=md_path)
+        if any(ln.startswith(_CONFLICT_PREFIXES) for ln in extracted.splitlines()):
+            raise IntegrityError(
+                f"Unresolved Git merge conflict markers found in '{md_path}'. "
+                "Resolve the conflict markers before running ctxa."
+            )
         if extracted:
             notes_from_md = ensure_canonical_notes_sections(extracted)
 
     if notes_from_md is not None and notes_from_store is not None:
-        # Prefer inline edits in PROJECT_CONTEXT.md if they differ from the default template
-        if notes_from_md != DEFAULT_MANUAL_NOTES_BLOCK:
-            effective = notes_from_md
-        else:
-            effective = notes_from_store
+        effective = _union_two_notes_blocks(notes_from_store, notes_from_md)
     elif notes_from_md is not None:
         effective = notes_from_md
     elif notes_from_store is not None:
