@@ -4,18 +4,35 @@
 
 `context-archive` (`ctxa`) statically analyzes a software repository and compiles a compact, versioned, model-agnostic handoff artifact (`PROJECT_CONTEXT.md`) alongside a machine-readable canonical project graph (`.context/graph.json`) and append-only change journal (`.context/journal/YYYY-MM.jsonl`).
 
-## Key Features
-
-- **Zero-Execution Static Analysis:** Deterministic AST extraction without importing or executing target repository code.
-- **First-Class Incrementalism:** Append-only JSONL change journal and partial graph updates (`ctxa update`).
-- **Protected Human Knowledge:** Preserves architectural notes and constraints across regenerations (`<!-- CTXA:MANUAL:START/END -->`).
-- **Cryptographic Freshness Verification:** Detects stale context or dirty working trees via `ctxa verify`.
-- **Task-Specific Context Compilation:** Ranks and budgets relevant symbols/contracts within strict token limits (`ctxa context`).
-
-## Development Quickstart
+## Quickstart Workflow
 
 ```bash
-poetry install
+# 1. Initialize .context/, snapshot-0001.json, and PROJECT_CONTEXT.md
+ctxa init
+
+# 2. Record durable architectural decisions or constraints
+ctxa note "All monetary calculations must use Decimal" --type constraint --scope src/pricing.py
+
+# 3. Record incremental code changes into the append-only JSONL journal
+ctxa update -m "Add discount rounding to calculate_total"
+
+# 4. Inspect semantic diff and downstream caller/test impact
+ctxa diff --format text
+
+# 5. Refresh portable PROJECT_CONTEXT.md and verify cryptographic freshness
+ctxa handoff
+ctxa verify
+
+# 6. Compile a token-budgeted context packet for a specific task
+ctxa context "Add rate limiting to POST /orders" --max-tokens 6000
+
+# 7. Fold unincorporated journal records into a new snapshot checkpoint
+ctxa compact
+```
+
+## Development & Verification Gates
+
+```bash
 poetry check --lock
 poetry run ruff check .
 poetry run ruff format --check .

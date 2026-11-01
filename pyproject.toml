@@ -1,6 +1,6 @@
 [project]
 name = "context-archive"
-version = "0.1.0"
+version = "1.0.0"
 description = "Portable AI Project Context Compiler with incremental change journaling"
 authors = [{ name = "Context Archive Contributors" }]
 license = "MIT"
@@ -24,8 +24,8 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/org/context-archive"
-Repository = "https://github.com/org/context-archive"
+Homepage = "https://github.com/IT2411/context-archive"
+Repository = "https://github.com/IT2411/context-archive"
 
 [project.scripts]
 ctxa = "context_archive.cli:app"
@@ -95,6 +95,7 @@ exclude = ["^tests/fixtures/"]
 minversion = "8.0"
 addopts = "-ra -q --strict-markers --strict-config --ignore=tests/fixtures"
 testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py", "bench_*.py"]
 markers = [
     "unit: fast isolated unit tests",
     "integration: end-to-end filesystem and CLI workflow tests",

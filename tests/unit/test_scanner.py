@@ -51,7 +51,6 @@ def test_secret_exclusion_and_env_example_allowlist(tmp_path: Path) -> None:
     assert "app.py" in scanned_paths
     assert ".env.example" in scanned_paths
 
-    # None of the secret files may appear in scanned_files
     for secret_name in (
         ".env",
         ".env.production",
@@ -62,7 +61,6 @@ def test_secret_exclusion_and_env_example_allowlist(tmp_path: Path) -> None:
     ):
         assert secret_name not in scanned_paths
 
-    # Verify secret contents never leak into serialized report JSON
     serialized = report.model_dump_json()
     assert "PROD_SECRET" not in serialized
     assert "BEGIN PRIVATE KEY" not in serialized
@@ -80,16 +78,14 @@ def test_symlink_escape_and_cycle_detection(tmp_path: Path) -> None:
     repo_dir.mkdir()
     (repo_dir / "main.py").write_text("print('ok')\n", encoding="utf-8")
 
-    # 1. Symlink escaping outside repo_root
-    (repo_dir / "escape_link.py").symlink_to(outside_secret)
-
-    # 2. Circular directory symlink
-    sub_dir = repo_dir / "subdir"
-    sub_dir.mkdir()
-    (sub_dir / "loop_to_root").symlink_to(repo_dir, target_is_directory=True)
-
-    # 3. Broken symlink
-    (repo_dir / "broken_link.py").symlink_to(repo_dir / "non_existent_target.py")
+    try:
+        (repo_dir / "escape_link.py").symlink_to(outside_secret)
+        sub_dir = repo_dir / "subdir"
+        sub_dir.mkdir()
+        (sub_dir / "loop_to_root").symlink_to(repo_dir, target_is_directory=True)
+        (repo_dir / "broken_link.py").symlink_to(repo_dir / "non_existent_target.py")
+    except OSError:  # pragma: no cover
+        pytest.skip("Symlink creation requires elevated privileges on this Windows runner.")
 
     cfg = load_config(repo_dir)
     report = scan_repository(repo_dir, cfg)
@@ -131,21 +127,25 @@ def test_gitignore_max_size_max_depth_and_concurrent_modification(tmp_path: Path
     (ignored_dir / "skip.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "debug.log").write_text("log line\n", encoding="utf-8")
 
-    # Large file exceeding 2048 bytes
     (tmp_path / "huge.py").write_text("x = 1\n" * 600, encoding="utf-8")
 
-    # Deeply nested directory exceeding max_depth=2
     deep_dir = tmp_path / "d1" / "d2" / "d3"
     deep_dir.mkdir(parents=True)
     (deep_dir / "too_deep.py").write_text("y = 2\n", encoding="utf-8")
 
-    # File that mutates mid-scan
     mutating_file = tmp_path / "mutating.py"
-    mutating_file.write_text("initial = 1\n", encoding="utf-8")
+    mutating_file.write_text("initial_long_payload = 1111111111\n", encoding="utf-8")
+
+    call_count = 0
 
     def _mutate_during_read(target: Path) -> None:
+        nonlocal call_count
         if target.name == "mutating.py":
-            target.write_text("modified_during_read = 22222\n", encoding="utf-8")
+            call_count += 1
+            if call_count == 1:
+                target.write_text("shorter_payload = 222\n", encoding="utf-8")
+            else:
+                target.write_text("tiny = 3\n", encoding="utf-8")
 
     cfg = CtxaConfig(
         scanner=ScannerConfig(max_file_size_bytes=2048, max_depth=2, respect_gitignore=True)

@@ -21,7 +21,7 @@ runner = CliRunner()
 @pytest.mark.unit
 def test_package_version_and_py_typed(repo_root: Path) -> None:
     """Verify package version and PEP 561 py.typed marker existence."""
-    assert context_archive.__version__ == "0.1.0"
+    assert context_archive.__version__ == "1.0.0"
     py_typed = repo_root / "src" / "context_archive" / "py.typed"
     assert py_typed.is_file()
 
@@ -31,11 +31,11 @@ def test_cli_version_and_help() -> None:
     """Verify CLI --version, version subcommand, and --help flags execute cleanly."""
     version_res = runner.invoke(app, ["--version"])
     assert version_res.exit_code == 0
-    assert "ctxa 0.1.0" in version_res.stdout
+    assert "ctxa 1.0.0" in version_res.stdout
 
     subcmd_res = runner.invoke(app, ["version"])
     assert subcmd_res.exit_code == 0
-    assert "ctxa 0.1.0" in subcmd_res.stdout
+    assert "ctxa 1.0.0" in subcmd_res.stdout
 
     help_res = runner.invoke(app, ["--help"])
     assert help_res.exit_code == 0
