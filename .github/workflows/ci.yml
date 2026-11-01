@@ -16,6 +16,9 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
+      - name: Disable Git autocrlf on Windows
+        run: git config --global core.autocrlf false
+
       - name: Checkout repository
         uses: actions/checkout@v4
 

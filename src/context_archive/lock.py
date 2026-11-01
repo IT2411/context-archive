@@ -75,9 +75,12 @@ def _is_pid_alive(pid: int) -> bool:
     if pid == os.getpid():
         return True
     if sys.platform == "win32":  # pragma: no cover
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return False
         process_query_limited_info = 0x1000
         still_active = 259
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32 = windll.kernel32
         handle = kernel32.OpenProcess(process_query_limited_info, False, pid)
         if not handle:
             return False

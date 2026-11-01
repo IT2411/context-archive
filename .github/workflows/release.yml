@@ -12,6 +12,9 @@ jobs:
       id-token: write
       contents: read
     steps:
+      - name: Disable Git autocrlf
+        run: git config --global core.autocrlf false
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -39,3 +42,5 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
