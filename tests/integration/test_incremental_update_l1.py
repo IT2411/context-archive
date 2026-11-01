@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from context_archive.cli import app
 from context_archive.exceptions import ExitCode
+from context_archive.lock import atomic_write_text
 from context_archive.state.journal import read_all_journal_records
 
 if TYPE_CHECKING:
@@ -33,12 +34,12 @@ def test_incremental_update_idempotency_revert_and_intent(
     calc_path = repo / "src" / "sample_lib" / "calculator.py"
     original_content = calc_path.read_text(encoding="utf-8")
 
-    # Modify function body only (L1)
+    # Modify function body only (L1) using atomic_write_text to preserve LF on Windows
     modified_content = original_content.replace(
         "return round_currency(subtotal + tax)",
         "total = subtotal + tax\n    return round_currency(total)",
     )
-    calc_path.write_text(modified_content, encoding="utf-8")
+    atomic_write_text(calc_path, modified_content)
 
     # Run `ctxa update` 3 consecutive times
     res_1 = runner.invoke(
@@ -75,8 +76,8 @@ def test_incremental_update_idempotency_revert_and_intent(
     assert verify_stale.exit_code == int(ExitCode.STALE_OR_DIFF)
     assert json.loads(verify_stale.stdout)["status"] == "STALE_JOURNALED"
 
-    # Revert the file to its original contents and run `ctxa update`
-    calc_path.write_text(original_content, encoding="utf-8")
+    # Revert the file to its original contents (preserving LF) and run `ctxa update`
+    atomic_write_text(calc_path, original_content)
     res_revert = runner.invoke(app, ["update", str(repo), "--deterministic", "--json"])
     assert res_revert.exit_code == int(ExitCode.SUCCESS)
     payload_rev = json.loads(res_revert.stdout)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,7 @@ class ContextSqliteCache:
         """Initialize SQLite schema or recreate DB if corrupt/incompatible."""
         self.context_dir.mkdir(parents=True, exist_ok=True)
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS cache_meta ("
                     "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
@@ -49,7 +50,7 @@ class ContextSqliteCache:
     def _rebuild_corrupt_db(self) -> None:
         """Delete corrupt cache.sqlite and initialize a fresh database."""
         self.db_path.unlink(missing_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute("CREATE TABLE cache_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             conn.execute(
                 "CREATE TABLE file_cache ("
@@ -70,7 +71,7 @@ class ContextSqliteCache:
             self._write_rows(file_fingerprints)
 
     def _write_rows(self, file_fingerprints: dict[str, str]) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute("DELETE FROM file_cache")
             conn.executemany(
                 "INSERT INTO file_cache (path, sha256, size_bytes) VALUES (?, ?, 0)",
@@ -81,7 +82,7 @@ class ContextSqliteCache:
     def load_fingerprints(self) -> dict[str, str]:
         """Read cached file fingerprints, returning empty dict and rebuilding on corruption."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
                 rows = conn.execute("SELECT path, sha256 FROM file_cache").fetchall()
                 return {str(r[0]): str(r[1]) for r in rows}
         except sqlite3.Error:

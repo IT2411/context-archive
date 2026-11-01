@@ -12,6 +12,7 @@ from context_archive.cli import execute_full_handoff
 from context_archive.config import load_config
 from context_archive.context.verifier import verify_repository_freshness
 from context_archive.exceptions import ExitCode
+from context_archive.lock import atomic_write_text
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,6 +35,7 @@ def test_freshness_detection_matrix(fixtures_dir: Path, tmp_path: Path) -> None:
     shutil.copytree(fixtures_dir / "fixture_py_lib", repo)
 
     _git(repo, "init", "-b", "main")
+    _git(repo, "config", "core.autocrlf", "false")
     _git(repo, "config", "user.email", "dev@example.com")
     _git(repo, "config", "user.name", "Dev")
     _git(repo, "add", ".")
@@ -54,20 +56,20 @@ def test_freshness_detection_matrix(fixtures_dir: Path, tmp_path: Path) -> None:
     # 2. Modify 1 byte in a tracked .py file -> STALE_UNRECORDED (Exit 2)
     calc_path = repo / "src" / "sample_lib" / "calculator.py"
     original_calc = calc_path.read_text(encoding="utf-8")
-    calc_path.write_text(original_calc + "\n# 1-byte comment edit\n", encoding="utf-8")
+    atomic_write_text(calc_path, original_calc + "\n# 1-byte comment edit\n")
 
     rep_mod = verify_repository_freshness(repo, cfg)
     assert rep_mod.status == "STALE_UNRECORDED"
     assert rep_mod.exit_code == int(ExitCode.STALE_OR_DIFF)
     assert "src/sample_lib/calculator.py" in rep_mod.modified_files
 
-    # Restore modified file
-    calc_path.write_text(original_calc, encoding="utf-8")
+    # Restore modified file preserving LF line endings across all OS platforms
+    atomic_write_text(calc_path, original_calc)
     assert verify_repository_freshness(repo, cfg).status == "CURRENT"
 
     # 3. Add a new .py file -> STALE_UNRECORDED (Exit 2)
     extra_file = repo / "src" / "sample_lib" / "extra.py"
-    extra_file.write_text("EXTRA = True\n", encoding="utf-8")
+    atomic_write_text(extra_file, "EXTRA = True\n")
     rep_add = verify_repository_freshness(repo, cfg)
     assert rep_add.status == "STALE_UNRECORDED"
     assert rep_add.exit_code == int(ExitCode.STALE_OR_DIFF)
@@ -81,12 +83,12 @@ def test_freshness_detection_matrix(fixtures_dir: Path, tmp_path: Path) -> None:
     rep_del = verify_repository_freshness(repo, cfg)
     assert rep_del.status == "STALE_UNRECORDED"
     assert "src/sample_lib/utils.py" in rep_del.deleted_files
-    utils_path.write_text(utils_backup, encoding="utf-8")
+    atomic_write_text(utils_path, utils_backup)
 
     # 5. Modify .ctxa.toml configuration -> STALE_UNRECORDED (Exit 2)
-    (repo / ".ctxa.toml").write_text(
+    atomic_write_text(
+        repo / ".ctxa.toml",
         '[project]\nname = "changed-name"\n[scanner]\nmax_depth = 12\n',
-        encoding="utf-8",
     )
     new_cfg = load_config(repo)
     rep_cfg = verify_repository_freshness(repo, new_cfg)
