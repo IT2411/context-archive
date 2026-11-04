@@ -16,10 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-tiktoken = ["tiktoken (>=0.7.0,<1.0.0)"]
+tiktoken = ["tiktoken (>=0.14.0,<1.0.0)"]
 mcp = ["mcp (>=1.0.0,<2.0.0)"]
 all = [
-    "tiktoken (>=0.7.0,<1.0.0)",
+    "tiktoken (>=0.14.0,<1.0.0)",
     "mcp (>=1.0.0,<2.0.0)",
 ]
 
