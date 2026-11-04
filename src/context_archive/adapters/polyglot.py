@@ -41,37 +41,36 @@ LANG_TAG_MAP: dict[str, str] = {
     "swift": "swift",
 }
 
-# Package / Namespace patterns
 _PACKAGE_RE = re.compile(r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)", re.MULTILINE)
 _CPP_NAMESPACE_RE = re.compile(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_:]*)", re.MULTILINE)
 
-# Import / Include patterns
 _JVM_IMPORT_RE = re.compile(r"^\s*import\s+(?:static\s+)?([A-Za-z0-9_.*]+)", re.MULTILINE)
 _CPP_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE)
 _GO_IMPORT_RE = re.compile(r'["`]([A-Za-z0-9_./-]+)["`]')
 _RUST_USE_RE = re.compile(r"^\s*use\s+([A-Za-z0-9_:{}*,\s]+);", re.MULTILINE)
 
-# Class / Struct / Interface / Object patterns
+# Captures class/struct/interface/object/enum/record/trait with optional constructor params & bases
 _TYPE_DECL_RE = re.compile(
-    r"^\s*(?:public\s+|private\s+|protected\s+|internal\s+|abstract\s+|final\s+|open\s+|data\s+|sealed\s+)*"
+    r"^\s*(?:@[A-Za-z0-9_]+(?:\([^)]*\))?\s*)*"
+    r"(?:public\s+|private\s+|protected\s+|internal\s+|abstract\s+|final\s+|open\s+|data\s+|sealed\s+|value\s+)*"
     r"(class|struct|interface|object|enum|record|trait)\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)"
     r"(?:<[^>]+>)?"
-    r"(?:\s*\([^)]*\))?"
+    r"(?:\s*(?:private\s+|public\s+|internal\s+)?(?:constructor\s*)?\(([^)]*)\))?"
     r"(?:\s*(?::|extends|implements)\s*([^{\n]+))?",
     re.MULTILINE,
 )
 
-# Kotlin function: `[suspend] fun [Receiver.]name(params)[: ReturnType]`
+# Kotlin function supporting regular identifiers and backtick test names
 _KT_FUN_RE = re.compile(
     r"^\s*(?:@[A-Za-z0-9_]+(?:\([^)]*\))?\s*)*"
-    r"(?:public\s+|private\s+|protected\s+|internal\s+|override\s+|open\s+|inline\s+)*"
-    r"(suspend\s+)?fun\s+(?:<[^>]+>\s*)?(?:[A-Za-z0-9_<>?]+\.)?([A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?:public\s+|private\s+|protected\s+|internal\s+|override\s+|open\s+|inline\s+|operator\s+|infix\s+)*"
+    r"(suspend\s+)?fun\s+(?:<[^>]+>\s*)?(?:[A-Za-z0-9_<>?]+\.)?"
+    r"(`[^`\n]+`|[A-Za-z_][A-Za-z0-9_]*)\s*"
     r"\(([^)]*)\)(?:\s*:\s*([^\n={]+))?",
     re.MULTILINE,
 )
 
-# Java / C# / C++ method or function declaration
 _C_LIKE_FUNC_RE = re.compile(
     r"^\s*(?:@[A-Za-z0-9_]+(?:\([^)]*\))?\s*)*"
     r"(?:(?:public|private|protected|internal|static|final|virtual|override|inline|explicit|constexpr|async|synchronized)\s+)*"
@@ -80,20 +79,17 @@ _C_LIKE_FUNC_RE = re.compile(
     re.MULTILINE,
 )
 
-# C++ GoogleTest / Catch2 macro: `TEST(Suite, Name)` or `TEST_F(Fixture, Name)`
 _CPP_TEST_MACRO_RE = re.compile(
     r"^\s*(TEST|TEST_F|TEST_P)\s*\(\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*\)",
     re.MULTILINE,
 )
 
-# Go / Rust / Ruby / PHP / Swift function declarations
 _OTHER_FUNC_RE = re.compile(
     r"^\s*(?:pub\s+)?(?:async\s+)?(?:func|fn|def|function)\s+"
     r"(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]+>)?\s*\(([^)]*)\)(?:\s*(?:->|:)?\s*([^\n{=;]+))?",
     re.MULTILINE,
 )
 
-# Spring / JAX-RS HTTP Route annotations on Java/Kotlin handlers
 _SPRING_ROUTE_RE = re.compile(
     r"@(GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)"
     r'(?:\(\s*(?:value\s*=\s*|path\s*=\s*)?["\']([^"\']+)["\']\s*\))?'
@@ -117,14 +113,40 @@ _CONTROL_KEYWORDS = frozenset(
         "namespace",
         "class",
         "struct",
+        "when",
+        "super",
+        "this",
+        "require",
+        "check",
+        "assert",
+        "assertEquals",
+        "assertTrue",
+        "assertFalse",
+        "assertNotNull",
+        "listOf",
+        "mapOf",
+        "setOf",
+        "mutableListOf",
+        "mutableMapOf",
+        "println",
+        "print",
     }
 )
 
 _CALL_INVOCATION_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_TYPE_TOKEN_RE = re.compile(r"\b([A-Z][A-Za-z0-9_]{2,})\b")
 
 
 def _line_at(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
+
+
+def _strip_test_suffix(type_name: str) -> str | None:
+    """If `type_name` is `BettingEngineTest`, return `BettingEngine`."""
+    for suffix in ("Tests", "Test", "Spec", "IT", "E2ETest"):
+        if type_name.endswith(suffix) and len(type_name) > len(suffix):
+            return type_name[: -len(suffix)]
+    return None
 
 
 def _compute_polyglot_module_name(rel_posix: str, source_text: str, language: str) -> str:
@@ -170,6 +192,7 @@ class _PolyglotFileRecord:
     test_symbol_ids: list[str] = field(default_factory=list)
     raw_imports: list[tuple[str, int]] = field(default_factory=list)
     raw_bases: list[tuple[str, str, int]] = field(default_factory=list)
+    raw_type_refs: list[tuple[str, str, int]] = field(default_factory=list)
     symbol_spans: list[tuple[int, str]] = field(default_factory=list)
 
 
@@ -288,7 +311,6 @@ class PolyglotAdapter:
                 rec, nodes, edges, global_symbols_by_name, global_symbols_by_qual
             )
 
-        # Pass 2: Link IMPORTS, INHERITS, CALLS, and TESTED_BY edges across the repository
         self._link_cross_file_edges(
             file_records=file_records,
             module_by_stem=module_by_stem,
@@ -332,10 +354,20 @@ class PolyglotAdapter:
             type_name = match.group(2)
             if type_name in _CONTROL_KEYWORDS:
                 continue
-            bases_raw = (match.group(3) or "").strip()
+            ctor_params = (match.group(3) or "").strip()
+            bases_raw = (match.group(4) or "").strip()
             line_no = _line_at(rec.source_text, match.start())
 
-            kind: NodeKind = "Schema" if kw in ("interface", "trait") else "Class"
+            is_test_class = rec.is_test_file and type_name.endswith(
+                ("Test", "Tests", "Spec", "E2ETest")
+            )
+            if is_test_class:
+                kind: NodeKind = "Test"
+            elif kw in ("interface", "trait"):
+                kind = "Schema"
+            else:
+                kind = "Class"
+
             prefix = f"schema:{rec.lang_tag}" if kind == "Schema" else rec.lang_tag
             sym_id = make_symbol_id(prefix, rec.rel_posix, type_name)
             full_qual = f"{rec.module_name}.{type_name}"
@@ -350,6 +382,12 @@ class PolyglotAdapter:
                             (sym_id, cleaned.split(".")[-1].split("::")[-1], line_no)
                         )
 
+            # Extract constructor parameter type references (`val engine: BettingEngine`)
+            if ctor_params:
+                for type_tok in _TYPE_TOKEN_RE.findall(ctor_params):
+                    if type_tok != type_name:
+                        rec.raw_type_refs.append((sym_id, type_tok, line_no))
+
             prov = Provenance(
                 source_path=rec.rel_posix,
                 line_start=line_no,
@@ -358,6 +396,7 @@ class PolyglotAdapter:
                 evidence_kind="deterministic",
                 confidence="high",
             )
+            ctor_sig = f"({ ' '.join(ctor_params.split()) })" if ctor_params else ""
             nodes.append(
                 Node(
                     id=sym_id,
@@ -368,7 +407,7 @@ class PolyglotAdapter:
                         "language": rec.language,
                         "declaration_kind": kw,
                         "bases": base_list,
-                        "signature": f"{kw} {type_name}",
+                        "signature": f"{kw} {type_name}{ctor_sig}",
                         "docstring_summary": "",
                     },
                     provenance=prov,
@@ -384,6 +423,9 @@ class PolyglotAdapter:
                 )
             )
             rec.defined_symbols[type_name] = sym_id
+            rec.symbol_spans.append((line_no, sym_id))
+            if is_test_class:
+                rec.test_symbol_ids.append(sym_id)
             global_by_name.setdefault(type_name, sym_id)
             global_by_qual[full_qual] = sym_id
 
@@ -398,19 +440,19 @@ class PolyglotAdapter:
         text = rec.source_text
         seen_names_at_line: set[tuple[str, int]] = set()
 
-        # 1. Kotlin `fun` declarations
         if rec.language == "kotlin":
             for m in _KT_FUN_RE.finditer(text):
                 is_suspend = bool(m.group(1))
-                fn_name = m.group(2)
+                raw_fn_name = m.group(2).strip("`")
+                fn_name = re.sub(r"\s+", "_", raw_fn_name)
                 params = " ".join(m.group(3).split())
                 ret_type = (m.group(4) or "Unit").strip()
                 line_no = _line_at(text, m.start())
-                snippet_before = text[max(0, m.start() - 120) : m.end()]
+                snippet_before = text[max(0, m.start() - 160) : m.end()]
                 is_test = rec.is_test_file and (
                     fn_name.startswith("test") or "@Test" in snippet_before
                 )
-                self._register_callable(
+                sym_id = self._register_callable(
                     rec=rec,
                     fn_name=fn_name,
                     sig=f"({params}) -> {ret_type}",
@@ -424,9 +466,11 @@ class PolyglotAdapter:
                     global_by_qual=global_by_qual,
                     seen=seen_names_at_line,
                 )
+                if sym_id is not None:
+                    for type_tok in _TYPE_TOKEN_RE.findall(f"{params} {ret_type}"):
+                        rec.raw_type_refs.append((sym_id, type_tok, line_no))
             return
 
-        # 2. C++ GoogleTest macros (`TEST(Suite, Case)`)
         if rec.language == "cpp":
             for tm in _CPP_TEST_MACRO_RE.finditer(text):
                 suite = tm.group(2)
@@ -448,7 +492,6 @@ class PolyglotAdapter:
                     seen=seen_names_at_line,
                 )
 
-        # 3. Java / C++ / C# typed functions & methods
         if rec.language in ("java", "cpp", "csharp"):
             for cm in _C_LIKE_FUNC_RE.finditer(text):
                 ret_type = " ".join(cm.group(1).split())
@@ -462,7 +505,7 @@ class PolyglotAdapter:
                 is_test = rec.is_test_file and (
                     fn_name.startswith("test") or "@Test" in snippet_before
                 )
-                self._register_callable(
+                sym_id = self._register_callable(
                     rec=rec,
                     fn_name=fn_name,
                     sig=f"({params}) -> {ret_type}",
@@ -476,9 +519,11 @@ class PolyglotAdapter:
                     global_by_qual=global_by_qual,
                     seen=seen_names_at_line,
                 )
+                if sym_id is not None:
+                    for type_tok in _TYPE_TOKEN_RE.findall(f"{params} {ret_type}"):
+                        rec.raw_type_refs.append((sym_id, type_tok, line_no))
             return
 
-        # 4. Go / Rust / Ruby / PHP / Swift functions
         for om in _OTHER_FUNC_RE.finditer(text):
             fn_name = om.group(1)
             if fn_name in _CONTROL_KEYWORDS:
@@ -521,9 +566,9 @@ class PolyglotAdapter:
         global_by_name: dict[str, str],
         global_by_qual: dict[str, str],
         seen: set[tuple[str, int]],
-    ) -> None:
+    ) -> str | None:
         if (fn_name, line_no) in seen:
-            return
+            return None
         seen.add((fn_name, line_no))
 
         kind: NodeKind = "Test" if is_test else "Function"
@@ -569,7 +614,6 @@ class PolyglotAdapter:
         global_by_name.setdefault(fn_name, sym_id)
         global_by_qual[full_qual] = sym_id
 
-        # Check for Spring Boot route annotations (`@GetMapping("/orders")`, `@PostMapping(...)`)
         route_match = _SPRING_ROUTE_RE.search(snippet_before)
         if route_match:
             ann_name = route_match.group(1)
@@ -605,6 +649,7 @@ class PolyglotAdapter:
                     provenance=prov,
                 )
             )
+        return sym_id
 
     def _link_cross_file_edges(
         self,
@@ -672,7 +717,83 @@ class PolyglotAdapter:
                         )
                     )
 
-            # 3. CALLS and TESTED_BY edges
+            # 3. DEPENDS_ON edges from constructor/method parameter & return types
+            for src_sym_id, ref_type_name, line_no in rec.raw_type_refs:
+                target_type_id = global_symbols_by_name.get(ref_type_name)
+                if target_type_id is not None and target_type_id != src_sym_id:
+                    prov = Provenance(
+                        source_path=rec.rel_posix,
+                        line_start=line_no,
+                        line_end=line_no,
+                        extractor=EXTRACTOR_ID,
+                        evidence_kind="deterministic",
+                        confidence="high",
+                    )
+                    edges.append(
+                        Edge(
+                            id=make_edge_id("DEPENDS_ON", src_sym_id, target_type_id),
+                            kind="DEPENDS_ON",
+                            source_id=src_sym_id,
+                            target_id=target_type_id,
+                            provenance=prov,
+                        )
+                    )
+
+            # 4. Naming-convention & body-reference TESTED_BY linking for test classes/files
+            if rec.is_test_file:
+                file_stem = PurePosixPath(rec.rel_posix).stem
+                target_class_name = _strip_test_suffix(file_stem)
+                primary_test_id = rec.test_symbol_ids[0] if rec.test_symbol_ids else rec.module_id
+                if target_class_name and target_class_name in global_symbols_by_name:
+                    tested_id = global_symbols_by_name[target_class_name]
+                    if tested_id != primary_test_id:
+                        prov = Provenance(
+                            source_path=rec.rel_posix,
+                            line_start=1,
+                            line_end=1,
+                            extractor=EXTRACTOR_ID,
+                            evidence_kind="deterministic",
+                            confidence="high",
+                        )
+                        edges.append(
+                            Edge(
+                                id=make_edge_id("TESTED_BY", tested_id, primary_test_id),
+                                kind="TESTED_BY",
+                                source_id=tested_id,
+                                target_id=primary_test_id,
+                                provenance=prov,
+                            )
+                        )
+
+                # Also link any repo class/type referenced inside a test file to `primary_test_id`
+                for type_m in _TYPE_TOKEN_RE.finditer(rec.source_text):
+                    ref_name = type_m.group(1)
+                    ref_id = global_symbols_by_name.get(ref_name)
+                    if (
+                        ref_id is not None
+                        and ref_id not in rec.test_symbol_ids
+                        and ref_id not in rec.defined_symbols.values()
+                    ):
+                        line_no = _line_at(rec.source_text, type_m.start())
+                        prov = Provenance(
+                            source_path=rec.rel_posix,
+                            line_start=line_no,
+                            line_end=line_no,
+                            extractor=EXTRACTOR_ID,
+                            evidence_kind="deterministic",
+                            confidence="high",
+                        )
+                        edges.append(
+                            Edge(
+                                id=make_edge_id("TESTED_BY", ref_id, primary_test_id),
+                                kind="TESTED_BY",
+                                source_id=ref_id,
+                                target_id=primary_test_id,
+                                provenance=prov,
+                            )
+                        )
+
+            # 5. CALLS and TESTED_BY edges from function/constructor invocations
             rec.symbol_spans.sort(key=lambda item: item[0])
             for call_m in _CALL_INVOCATION_RE.finditer(rec.source_text):
                 callee_name = call_m.group(1)
@@ -688,7 +809,6 @@ class PolyglotAdapter:
                     if span_line < call_line:
                         caller_id = sym_id
                     elif span_line == call_line:
-                        # This is the declaration line itself, not a call
                         caller_id = sym_id
                         break
                     else:
@@ -714,13 +834,18 @@ class PolyglotAdapter:
                         provenance=prov,
                     )
                 )
-                if caller_id in rec.test_symbol_ids:
+                if caller_id in rec.test_symbol_ids or rec.is_test_file:
+                    test_owner_id = (
+                        caller_id
+                        if caller_id in rec.test_symbol_ids
+                        else (rec.test_symbol_ids[0] if rec.test_symbol_ids else caller_id)
+                    )
                     edges.append(
                         Edge(
-                            id=make_edge_id("TESTED_BY", target_sym_id, caller_id),
+                            id=make_edge_id("TESTED_BY", target_sym_id, test_owner_id),
                             kind="TESTED_BY",
                             source_id=target_sym_id,
-                            target_id=caller_id,
+                            target_id=test_owner_id,
                             provenance=prov,
                         )
                     )

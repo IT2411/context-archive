@@ -58,8 +58,51 @@ STOP_WORDS: frozenset[str] = frozenset(
         "function",
         "method",
         "class",
+        "between",
+        "after",
+        "when",
+        "investigate",
     }
 )
+
+_SUFFIX_RULES: tuple[tuple[str, str], ...] = (
+    ("ations", "at"),
+    ("ation", "at"),
+    ("ition", "it"),
+    ("ments", "ment"),
+    ("ment", ""),
+    ("ities", "ity"),
+    ("ances", "ance"),
+    ("ences", "ence"),
+    ("ering", "er"),
+    ("ling", "l"),
+    ("ting", "t"),
+    ("ning", "n"),
+    ("ming", "m"),
+    ("ping", "p"),
+    ("ging", "g"),
+    ("ding", "d"),
+    ("bing", "b"),
+    ("ving", "v"),
+    ("zing", "z"),
+    ("ing", ""),
+    ("edly", ""),
+    ("ed", ""),
+    ("ies", "y"),
+    ("es", ""),
+    ("s", ""),
+)
+
+
+def _stem_word(word: str) -> str:
+    """Deterministic lightweight stemmer (`betting` -> `bet`, `validation` -> `validat`)."""
+    w = word.lower()
+    if len(w) <= 4:
+        return w
+    for suffix, replacement in _SUFFIX_RULES:
+        if w.endswith(suffix) and (len(w) - len(suffix) + len(replacement)) >= 3:
+            return w[: -len(suffix)] + replacement
+    return w
 
 
 class RankedCandidate(BaseModel):
@@ -100,28 +143,49 @@ class TaskPacket(BaseModel):
 
 
 def tokenize_task_query(task: str) -> list[str]:
-    """Extract normalized search terms from a natural-language task description."""
+    """Extract normalized search terms and stems from a natural-language task description."""
     raw_parts = _TOKEN_SPLIT_RE.split(task.strip())
     terms: list[str] = []
     seen: set[str] = set()
+
+    def _add(tok: str) -> None:
+        if len(tok) >= 2 and tok not in STOP_WORDS and tok not in seen:
+            seen.add(tok)
+            terms.append(tok)
 
     for raw in raw_parts:
         if not raw:
             continue
         lowered = raw.lower().strip("._/-")
-        if len(lowered) >= 2 and lowered not in STOP_WORDS and lowered not in seen:
-            seen.add(lowered)
-            terms.append(lowered)
+        _add(lowered)
+        stemmed = _stem_word(lowered)
+        if len(stemmed) >= 3:
+            _add(stemmed)
 
-        # Split camelCase, PascalCase, snake_case, and path segments
         de_camel = _CAMEL_SPLIT_RE.sub(r"\1_\2", raw)
         for sub in re.split(r"[_./-]+", de_camel):
             sub_low = sub.lower()
-            if len(sub_low) >= 2 and sub_low not in STOP_WORDS and sub_low not in seen:
-                seen.add(sub_low)
-                terms.append(sub_low)
+            _add(sub_low)
+            sub_stem = _stem_word(sub_low)
+            if len(sub_stem) >= 3:
+                _add(sub_stem)
 
     return terms
+
+
+def _extract_identifier_tokens(node: Node) -> set[str]:
+    """Split a node's name, qualified_name, and path into lowercase sub-words and stems."""
+    combined = f"{node.name} {node.qualified_name} {node.provenance.source_path}"
+    de_camel = _CAMEL_SPLIT_RE.sub(r"\1_\2", combined)
+    tokens: set[str] = set()
+    for part in re.split(r"[^a-zA-Z0-9]+", de_camel):
+        low = part.lower()
+        if len(low) >= 2:
+            tokens.add(low)
+            stem = _stem_word(low)
+            if len(stem) >= 3:
+                tokens.add(stem)
+    return tokens
 
 
 def _score_nodes_for_task(
@@ -130,13 +194,20 @@ def _score_nodes_for_task(
     query_terms: list[str],
     unincorporated_records: tuple[JournalRecord, ...],
 ) -> list[RankedCandidate]:
-    """Deterministically score and rank graph nodes by keyword, graph proximity, and recency."""
+    """Deterministically score and rank graph nodes by keyword, stem, proximity, and centrality."""
     recently_modified_symbols: set[str] = set()
     recently_modified_paths: set[str] = set()
     for rec in unincorporated_records:
         for fc in rec.file_changes:
             recently_modified_paths.add(fc.path)
             recently_modified_symbols.update(fc.modified_symbols)
+
+    # Precompute node degree (inbound + outbound structural edges) for centrality tie-breaking
+    degree_by_id: dict[str, int] = {}
+    for edge in graph.edges:
+        if edge.kind != "CONTAINS":
+            degree_by_id[edge.source_id] = degree_by_id.get(edge.source_id, 0) + 1
+            degree_by_id[edge.target_id] = degree_by_id.get(edge.target_id, 0) + 1
 
     candidate_nodes = [n for n in graph.nodes if n.kind != "File"]
     direct_scores: dict[str, int] = {}
@@ -150,14 +221,18 @@ def _score_nodes_for_task(
         path_low = node.provenance.source_path.lower()
         doc_low = str(node.attributes.get("docstring_summary", "")).lower()
         route_low = str(node.attributes.get("route_path", "")).lower()
+        id_subtokens = _extract_identifier_tokens(node)
 
         for term in query_terms:
             if term in (name_low, qual_low, path_low):
                 score += 50
                 reasons.append(f"exact_match:{term}(+50)")
-            elif term in name_low or term in qual_low or term in path_low:
-                score += 25
-                reasons.append(f"partial_match:{term}(+25)")
+            elif term in id_subtokens:
+                score += 30
+                reasons.append(f"token_match:{term}(+30)")
+            elif len(term) >= 4 and (term in name_low or term in qual_low or term in path_low):
+                score += 20
+                reasons.append(f"substring_match:{term}(+20)")
             elif term in doc_low or (route_low and term in route_low):
                 score += 15
                 reasons.append(f"doc_or_route_match:{term}(+15)")
@@ -172,38 +247,66 @@ def _score_nodes_for_task(
         direct_scores[node.id] = score
         reasons_by_id[node.id] = reasons
 
-    # Identify seed nodes (nodes with direct keyword match >= 25)
+    # Identify seed nodes (nodes with direct keyword/stem match >= 25)
     seed_ids = {nid for nid, sc in direct_scores.items() if sc >= 25}
 
-    # If low-information query (0 seeds matched), fall back to recently modified or top symbols
+    # If low-information or architectural overview query (0 seeds matched), rank by graph centrality
     if not seed_ids:
         for node in candidate_nodes:
-            if node.kind in ("Endpoint", "Schema", "Function", "Class", "Method"):
-                direct_scores[node.id] += 10
-                reasons_by_id[node.id].append("fallback_core_symbol(+10)")
+            if node.kind in ("Endpoint", "Schema", "DataEntity", "Function", "Class", "Method"):
+                centrality_bonus = min(25, degree_by_id.get(node.id, 0) * 3)
+                base_score = 10 + centrality_bonus
+                direct_scores[node.id] += base_score
+                reasons_by_id[node.id].append(f"architecture_centrality(+{base_score})")
 
-    # Graph proximity boost: 1-hop (+20) and 2-hop (+10) from seed_ids
+    # Graph proximity boost:
+    # - 1-hop TESTED_BY tests of seed nodes get +30 so relevant unit/E2E tests appear prominently!
+    # - Other 1-hop neighbors get +20, 2-hop neighbors get +10.
     hop1_ids: set[str] = set()
+    seed_linked_test_ids: set[str] = set()
     for sid in sorted(seed_ids):
+        for test_edge in graph.outbound_edges(sid, kinds={"TESTED_BY"}):
+            seed_linked_test_ids.add(test_edge.target_id)
+            hop1_ids.add(test_edge.target_id)
         for nb in graph.neighbors(sid, direction="both"):
             if nb.id not in seed_ids and nb.kind != "File":
                 hop1_ids.add(nb.id)
+                if nb.kind == "Test":
+                    seed_linked_test_ids.add(nb.id)
 
     hop2_ids: set[str] = set()
     for h1_id in sorted(hop1_ids):
         for nb in graph.neighbors(h1_id, direction="both"):
             if nb.id not in seed_ids and nb.id not in hop1_ids and nb.kind != "File":
                 hop2_ids.add(nb.id)
+                if nb.kind == "Test":
+                    seed_linked_test_ids.add(nb.id)
 
     for h1_id in hop1_ids:
         if h1_id in direct_scores:
-            direct_scores[h1_id] += 20
-            reasons_by_id[h1_id].append("graph_hop_1(+20)")
+            if h1_id in seed_linked_test_ids:
+                direct_scores[h1_id] += 30
+                reasons_by_id[h1_id].append("verifies_seed_symbol(+30)")
+            else:
+                direct_scores[h1_id] += 20
+                reasons_by_id[h1_id].append("graph_hop_1(+20)")
 
     for h2_id in hop2_ids:
         if h2_id in direct_scores:
-            direct_scores[h2_id] += 10
-            reasons_by_id[h2_id].append("graph_hop_2(+10)")
+            bonus = 20 if h2_id in seed_linked_test_ids else 10
+            label = (
+                "verifies_neighbor(+20)" if h2_id in seed_linked_test_ids else "graph_hop_2(+10)"
+            )
+            direct_scores[h2_id] += bonus
+            reasons_by_id[h2_id].append(label)
+
+    # Add a small centrality tie-breaker (+1 to +5) to matched nodes so hubs outrank leaf helpers
+    for nid in list(direct_scores):
+        if direct_scores[nid] > 0 and nid in seed_ids:
+            deg_bonus = min(5, degree_by_id.get(nid, 0))
+            if deg_bonus > 0:
+                direct_scores[nid] += deg_bonus
+                reasons_by_id[nid].append(f"centrality(+{deg_bonus})")
 
     ranked: list[RankedCandidate] = []
     for node in candidate_nodes:
@@ -213,7 +316,11 @@ def _score_nodes_for_task(
 
         if node.id in seed_ids:
             tier = 2
-        elif node.kind in ("Endpoint", "Schema", "DataEntity") or node.id in hop1_ids:
+        elif (
+            node.kind in ("Endpoint", "Schema", "DataEntity")
+            or node.id in seed_linked_test_ids
+            or node.id in hop1_ids
+        ):
             tier = 3
         elif node.kind == "Test" or node.id in hop2_ids:
             tier = 4
@@ -238,7 +345,13 @@ def _score_nodes_for_task(
     return ranked
 
 
-def _read_code_excerpt(repo_root: Path, rel_path: str, line_start: int, line_end: int) -> str:
+def _read_code_excerpt(
+    repo_root: Path,
+    rel_path: str,
+    line_start: int,
+    line_end: int,
+    language: str = "python",
+) -> str:
     """Safely read up to 18 lines of source code for a top-ranked seed symbol."""
     target = repo_root / rel_path
     if not target.is_file():
@@ -248,33 +361,111 @@ def _read_code_excerpt(repo_root: Path, rel_path: str, line_start: int, line_end
     except OSError:
         return ""
     start_idx = max(0, line_start - 1)
-    end_idx = min(len(all_lines), start_idx + 18, line_end)
+    effective_end = max(line_end, line_start + 12)
+    end_idx = min(len(all_lines), start_idx + 18, effective_end)
     snippet = "\n".join(all_lines[start_idx:end_idx]).strip()
     if not snippet:
         return ""
-    return f"```python\n{snippet}\n```"
+    return f"```{language}\n{snippet}\n```"
+
+
+def _format_relationship_summary(graph: CanonicalGraph, node: Node) -> str:
+    """Format compact inline relationship metadata (Calls, Used by, Implements, Tests)."""
+    by_id = graph.node_map()
+    rel_parts: list[str] = []
+
+    # Outbound CALLS / DEPENDS_ON / INHERITS / VALIDATES_WITH / CONSUMES
+    uses = sorted(
+        {
+            by_id[e.target_id].name
+            for e in graph.outbound_edges(
+                node.id,
+                kinds={"CALLS", "DEPENDS_ON", "INHERITS", "VALIDATES_WITH", "CONSUMES"},
+            )
+            if e.target_id in by_id and by_id[e.target_id].kind != "File"
+        }
+    )
+    if uses:
+        rel_parts.append("Uses/Calls: " + ", ".join(f"`{u}`" for u in uses[:5]))
+
+    # Inbound CALLS / DEPENDS_ON / INHERITS / CONSUMES (who depends on this symbol)
+    used_by = sorted(
+        {
+            by_id[e.source_id].name
+            for e in graph.inbound_edges(
+                node.id,
+                kinds={"CALLS", "DEPENDS_ON", "INHERITS", "CONSUMES"},
+            )
+            if e.source_id in by_id and by_id[e.source_id].kind not in ("File", "Test")
+        }
+    )
+    if used_by:
+        rel_parts.append("Used by: " + ", ".join(f"`{u}`" for u in used_by[:5]))
+
+    # Outbound TESTED_BY (which tests verify this symbol)
+    tests = sorted(
+        {
+            by_id[e.target_id].name
+            for e in graph.outbound_edges(node.id, kinds={"TESTED_BY"})
+            if e.target_id in by_id
+        }
+    )
+    if tests:
+        rel_parts.append("Verified by: " + ", ".join(f"`{t}`" for t in tests[:4]))
+
+    # If this node is itself a Test, show what it verifies
+    if node.kind == "Test":
+        verifies = sorted(
+            {
+                by_id[e.source_id].name
+                for e in graph.inbound_edges(node.id, kinds={"TESTED_BY"})
+                if e.source_id in by_id
+            }
+        )
+        if verifies:
+            rel_parts.append("Verifies: " + ", ".join(f"`{v}`" for v in verifies[:5]))
+
+    return " | ".join(rel_parts)
 
 
 def _format_candidate_block(
     repo_root: Path,
+    graph: CanonicalGraph,
     cand: RankedCandidate,
     node: Node,
     *,
     include_excerpt: bool,
 ) -> str:
-    """Format a single RankedCandidate into Markdown."""
+    """Format a single RankedCandidate into Markdown with provenance and relationship edges."""
     sig = str(node.attributes.get("signature", ""))
     async_prefix = "async " if node.attributes.get("is_async") else ""
     doc = str(node.attributes.get("docstring_summary", ""))
     doc_part = f" — {doc}" if doc else ""
     reasons_str = ", ".join(cand.reasons[:3])
+    rel_summary = _format_relationship_summary(graph, node)
+    rel_part = f" | {rel_summary}" if rel_summary else ""
+
     header_line = (
         f"- **[{cand.kind}] `{async_prefix}{cand.qualified_name}{sig}`** "
         f"(`{cand.source_path}:{cand.line_start}-{cand.line_end}` | "
-        f"score=`{cand.score}` | `{reasons_str}`){doc_part}"
+        f"score=`{cand.score}` | `{reasons_str}`){doc_part}{rel_part}"
     )
-    if include_excerpt and cand.kind in ("Function", "Method", "Class", "Endpoint", "Schema"):
-        excerpt = _read_code_excerpt(repo_root, cand.source_path, cand.line_start, cand.line_end)
+    if include_excerpt and cand.kind in (
+        "Function",
+        "Method",
+        "Class",
+        "Endpoint",
+        "Schema",
+        "Test",
+    ):
+        lang = str(node.attributes.get("language", "python"))
+        excerpt = _read_code_excerpt(
+            repo_root,
+            cand.source_path,
+            cand.line_start,
+            cand.line_end,
+            language=lang,
+        )
         if excerpt:
             return f"{header_line}\n{excerpt}"
     return header_line
@@ -373,6 +564,7 @@ def compile_task_context(
         remaining_after = ranked_candidates[idx + 1 :]
         block_with_code = _format_candidate_block(
             repo_root,
+            effective.graph,
             cand,
             node,
             include_excerpt=(cand.tier == 2 and len(included) < 3),
@@ -390,6 +582,7 @@ def compile_task_context(
 
         block_sig_only = _format_candidate_block(
             repo_root,
+            effective.graph,
             cand,
             node,
             include_excerpt=False,

@@ -158,3 +158,156 @@ def test_kotlin_java_cpp_go_rust_polyglot_extraction_and_handoff(
 
     upd_res = runner.invoke(app, ["update", str(repo), "--deterministic"])
     assert upd_res.exit_code == int(ExitCode.SUCCESS)
+
+
+@pytest.mark.unit
+def test_poker_night_kotlin_evaluation_scenarios(tmp_path: Path) -> None:
+    """Verify task-specific ranking, relationship rendering, and test linking on Kotlin app."""
+    repo = tmp_path / "poker_night"
+    src_dir = repo / "app" / "src" / "main" / "kotlin" / "com" / "poker"
+    test_dir = repo / "app" / "src" / "test" / "kotlin" / "com" / "poker"
+    src_dir.mkdir(parents=True)
+    test_dir.mkdir(parents=True)
+
+    (src_dir / "BettingEngine.kt").write_text(
+        "package com.poker\n\n"
+        "class PotCalculator {\n"
+        "    fun calculateSidePots(total: Int): Int {\n"
+        "        return total\n"
+        "    }\n"
+        "}\n\n"
+        "class BettingEngine(private val potCalculator: PotCalculator) {\n"
+        "    fun validateAction(playerBet: Int, minRaise: Int): Boolean {\n"
+        "        calculateSidePots(playerBet)\n"
+        "        return playerBet >= minRaise\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (src_dir / "PokerHostServer.kt").write_text(
+        "package com.poker\n\n"
+        "class ClientSessionRegistry {\n"
+        "    fun registerClient(clientId: String): Boolean {\n"
+        "        return true\n"
+        "    }\n"
+        "}\n\n"
+        "class PokerMultiplayerClient {\n"
+        "    suspend fun connectToHost(hostUrl: String): Boolean {\n"
+        "        return true\n"
+        "    }\n"
+        "}\n\n"
+        "class PokerHostServer(private val registry: ClientSessionRegistry) {\n"
+        "    suspend fun handleClientConnection(clientId: String): Boolean {\n"
+        "        return registerClient(clientId)\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (src_dir / "SessionPersistenceService.kt").write_text(
+        "package com.poker\n\n"
+        "class StateReplayer {\n"
+        "    fun replaySessionState(snapshotJson: String): Boolean {\n"
+        "        return true\n"
+        "    }\n"
+        "}\n\n"
+        "class SessionPersistenceService(private val replayer: StateReplayer) {\n"
+        "    fun recoverSessionAfterRestart(sessionId: String): Boolean {\n"
+        "        return replaySessionState(sessionId)\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    # Kotlin tests including backtick test names
+    (test_dir / "BettingEngineTest.kt").write_text(
+        "package com.poker\n\n"
+        "class BettingEngineTest {\n"
+        "    @Test\n"
+        "    fun `should validate betting action and min raise`() {\n"
+        "        val engine = BettingEngine(PotCalculator())\n"
+        "        engine.validateAction(100, 50)\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (test_dir / "PokerHostServerTest.kt").write_text(
+        "package com.poker\n\n"
+        "class PokerHostServerTest {\n"
+        "    @Test\n"
+        "    fun testMultiplayerHostConnection() {\n"
+        "        val server = PokerHostServer(ClientSessionRegistry())\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (test_dir / "PersistenceAndRecoveryTest.kt").write_text(
+        "package com.poker\n\n"
+        "class PersistenceAndRecoveryTest {\n"
+        "    @Test\n"
+        "    fun testRecoverSessionAfterRestart() {\n"
+        "        val svc = SessionPersistenceService(StateReplayer())\n"
+        '        svc.recoverSessionAfterRestart("s1")\n'
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    assert runner.invoke(app, ["init", str(repo), "--deterministic"]).exit_code == 0
+
+    # Verify .ctxa.toml recorded primary_languages = ["kotlin"] instead of ["python"]
+    ctxa_toml_text = (repo / ".ctxa.toml").read_text(encoding="utf-8")
+    assert 'primary_languages = ["kotlin"]' in ctxa_toml_text
+
+    # Task A: Domain logic ("Fix an issue in poker betting and action validation")
+    res_a = runner.invoke(
+        app,
+        [
+            "context",
+            "Fix an issue in poker betting and action validation",
+            str(repo),
+            "--max-tokens",
+            "6000",
+        ],
+    )
+    assert res_a.exit_code == 0
+    out_a = res_a.stdout
+    assert "BettingEngine" in out_a
+    assert "validateAction" in out_a
+    assert "BettingEngineTest" in out_a
+    assert "Verified by:" in out_a or "Uses/Calls:" in out_a
+    # Top candidate must have a high semantic match score (not fallback 10)
+    assert "score=`10`" not in out_a.splitlines()[12]
+
+    # Task B: Multiplayer networking
+    res_b = runner.invoke(
+        app,
+        [
+            "context",
+            "Investigate multiplayer connection failures between host and clients",
+            str(repo),
+            "--max-tokens",
+            "6000",
+        ],
+    )
+    assert res_b.exit_code == 0
+    out_b = res_b.stdout
+    assert "PokerHostServer" in out_b
+    assert "PokerMultiplayerClient" in out_b
+    assert "PokerHostServerTest" in out_b
+
+    # Task C: Persistence
+    res_c = runner.invoke(
+        app,
+        [
+            "context",
+            "Fix session persistence and recovery after application restart",
+            str(repo),
+            "--max-tokens",
+            "6000",
+        ],
+    )
+    assert res_c.exit_code == 0
+    out_c = res_c.stdout
+    assert "SessionPersistenceService" in out_c
+    assert "recoverSessionAfterRestart" in out_c
+    assert "PersistenceAndRecoveryTest" in out_c

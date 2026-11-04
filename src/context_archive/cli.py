@@ -141,6 +141,13 @@ def execute_full_handoff(
         if write_default_ctxa_toml:
             ctxa_toml = repo_root / ".ctxa.toml"
             if force_ctxa_toml or not ctxa_toml.exists():
+                pre_scan = scan_repository(repo_root, config)
+                detected = tuple(sorted({f.language for f in pre_scan.files if f.language}))
+                if detected and config.project.primary_languages == ("python",):
+                    config = load_config(
+                        repo_root,
+                        cli_overrides={"project": {"primary_languages": list(detected)}},
+                    )
                 atomic_write_text(ctxa_toml, render_default_ctxa_toml(config))
 
         manual_notes = sync_manual_notes(md_path=output_md_path, notes_path=notes_path)
