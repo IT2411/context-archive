@@ -2,10 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-11-01
+
+### Added
+- **Polyglot Language Support (`polyglot:1.0`):** Static analysis, symbol/contract extraction, dependency linking, and test mapping for **Kotlin** (`.kt`, `.kts`), **Java** (`.java`, including Spring Boot `@GetMapping`/`@PostMapping` endpoints and `@Test`), **C/C++** (`.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, including `#include`, namespaces, classes/structs, and GoogleTest `TEST`/`TEST_F`), **Go** (`.go`), **Rust** (`.rs`), **C#** (`.cs`), **Ruby** (`.rb`), **PHP** (`.php`), and **Swift** (`.swift`).
+- **Polyglot Build & Test Command Discovery:** Automatic detection of Gradle (`build.gradle`, `build.gradle.kts`), Maven (`pom.xml`), CMake (`CMakeLists.txt`), Cargo (`Cargo.toml`), and Go (`go.mod`) build/test commands in `PROJECT_CONTEXT.md`.
+- **Automatic Primary Language Detection:** `PROJECT_CONTEXT.md` automatically lists all languages discovered in the repository.
+
+### Fixed
+- **Windows Compatibility:** Explicit SQLite connection closing (`contextlib.closing`) and LF line-ending preservation across Windows CI runners.
+
 ## [1.0.0] - 2026-10-30
 
 ### Added
-- **Project Knowledge Engine:** Safe zero-execution repository scanner, secret/binary exclusion, Git state extractor, and deterministic canonical graph (`manifest.json`, `graph.json`).
-- **Static Adapters:** Python AST analyzer (`python_ast:1.0`), FastAPI & Pydantic contract extractor (`fastapi_pydantic:1.0`), SQLAlchemy/SQLModel entity extractor (`sqlalchemy_entity:1.0`), and TypeScript/JavaScript cross-stack adapter (`typescript:1.0`).
-- **Incremental Change Engine:** File/AST change detector (`L1`/`L2`/`L3`), append-only monthly JSONL journal (`.context/journal/YYYY-MM.jsonl`), partial graph invalidation, snapshot compaction (`ctxa compact`), and self-healing SQLite cache.
-- **Context Delivery Engine:** Deterministic `PROJECT_CONTEXT.md` renderer, two-way synced human notes (`ctxa note` and `CTXA:MANUAL` sentinel boundaries), freshness verifier (`ctxa verify`), semantic impact differ (`ctxa diff`), token-budgeted task compiler (`ctxa context`), branch divergence reconciler (`ctxa rebuild`), Python SDK (`ContextArchiveEngine`), and read-only stdio MCP server (`ctxa mcp`).
+- Initial production release of `context-archive` (`ctxa`).

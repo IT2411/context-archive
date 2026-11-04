@@ -1,6 +1,6 @@
 [project]
 name = "context-archive"
-version = "1.0.0"
+version = "1.0.1"
 description = "Portable AI Project Context Compiler with incremental change journaling"
 authors = [{ name = "Context Archive Contributors" }]
 license = "MIT"
