@@ -99,10 +99,7 @@ def refresh_graph_incrementally(
     Guarantees 100% semantic equivalence with a clean L3 full rebuild (FR-10).
     """
     source_files = [
-        f
-        for f in live_files
-        if f.language in ("python", "typescript", "javascript")
-        and f.category in ("source_code", "test")
+        f for f in live_files if f.language is not None and f.category in ("source_code", "test")
     ]
     total_src = max(1, len(source_files))
 

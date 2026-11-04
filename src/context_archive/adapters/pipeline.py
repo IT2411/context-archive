@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from context_archive.adapters.base import AdapterExtractionResult
 from context_archive.adapters.fastapi import FastApiContractExtractor
+from context_archive.adapters.polyglot import PolyglotAdapter
 from context_archive.adapters.python_ast import PythonAstAdapter
 from context_archive.adapters.sqlalchemy import SqlAlchemyEntityExtractor
 from context_archive.adapters.typescript import TypeScriptAdapter
@@ -34,7 +35,15 @@ def extract_all_adapters(
     sqlalchemy_extractor = SqlAlchemyEntityExtractor()
     sa_res = sqlalchemy_extractor.extract_repository(repo_root, files)
 
-    combined_backend_nodes = (*py_res.nodes, *fastapi_res.nodes, *sa_res.nodes)
+    polyglot_adapter = PolyglotAdapter()
+    poly_res = polyglot_adapter.extract_repository(repo_root, files)
+
+    combined_backend_nodes = (
+        *py_res.nodes,
+        *fastapi_res.nodes,
+        *sa_res.nodes,
+        *poly_res.nodes,
+    )
     ts_adapter = TypeScriptAdapter()
     ts_res = ts_adapter.extract_repository(
         repo_root,
@@ -43,12 +52,25 @@ def extract_all_adapters(
     )
 
     return AdapterExtractionResult(
-        nodes=(*py_res.nodes, *fastapi_res.nodes, *sa_res.nodes, *ts_res.nodes),
-        edges=(*py_res.edges, *fastapi_res.edges, *sa_res.edges, *ts_res.edges),
+        nodes=(
+            *py_res.nodes,
+            *fastapi_res.nodes,
+            *sa_res.nodes,
+            *poly_res.nodes,
+            *ts_res.nodes,
+        ),
+        edges=(
+            *py_res.edges,
+            *fastapi_res.edges,
+            *sa_res.edges,
+            *poly_res.edges,
+            *ts_res.edges,
+        ),
         diagnostics=(
             *py_res.diagnostics,
             *fastapi_res.diagnostics,
             *sa_res.diagnostics,
+            *poly_res.diagnostics,
             *ts_res.diagnostics,
         ),
     )

@@ -47,7 +47,7 @@ def _prov_ref(node: Node) -> str:
 
 
 def extract_dev_commands(repo_root: Path) -> list[str]:
-    """Extract quick-start and test commands from pyproject.toml, Makefile, or package.json."""
+    """Extract quick-start and test commands from Python, JS, JVM, C++, Rust, and Go manifests."""
     commands: list[str] = []
 
     pyproject_path = repo_root / "pyproject.toml"
@@ -104,6 +104,23 @@ def extract_dev_commands(repo_root: Path) -> list[str]:
         except (OSError, ValueError):
             pass
 
+    if (repo_root / "build.gradle").is_file() or (repo_root / "build.gradle.kts").is_file():
+        commands.append("Gradle Build & Test: `./gradlew build` | `./gradlew test`")
+
+    if (repo_root / "pom.xml").is_file():
+        commands.append("Maven Build & Test: `mvn compile` | `mvn test` (`pom.xml`)")
+
+    if (repo_root / "CMakeLists.txt").is_file():
+        commands.append(
+            "CMake Build & Test: `cmake -B build && cmake --build build && ctest --test-dir build`"
+        )
+
+    if (repo_root / "Cargo.toml").is_file():
+        commands.append("Cargo Build & Test: `cargo build` | `cargo test` (`Cargo.toml`)")
+
+    if (repo_root / "go.mod").is_file():
+        commands.append("Go Build & Test: `go build ./...` | `go test ./...` (`go.mod`)")
+
     return commands
 
 
@@ -128,8 +145,14 @@ def render_project_context_markdown(
     else:
         git_banner = "Revision `UNAVAILABLE (Non-Git Directory)`"
 
+    detected_langs = sorted({f.language for f in scan_report.files if f.language})
+    effective_langs = (
+        tuple(detected_langs)
+        if detected_langs and config.project.primary_languages == ("python",)
+        else config.project.primary_languages
+    )
+    langs_str = ", ".join(f"`{lang}`" for lang in effective_langs)
     journal_cursor_label = cursors.head_journal_cursor or "None"
-    langs_str = ", ".join(f"`{lang}`" for lang in config.project.primary_languages)
     inc_cursor = cursors.snapshot_incorporated_journal_cursor or "None"
 
     lines: list[str] = [

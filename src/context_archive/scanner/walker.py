@@ -31,10 +31,28 @@ LANGUAGE_BY_SUFFIX: dict[str, str] = {
     ".tsx": "typescript",
     ".js": "javascript",
     ".jsx": "javascript",
-    ".go": "go",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
     ".java": "java",
+    ".c": "cpp",
+    ".h": "cpp",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
+    ".go": "go",
     ".rs": "rust",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
 }
+
+SUPPORTED_SOURCE_LANGUAGES: frozenset[str] = frozenset(LANGUAGE_BY_SUFFIX.values())
 
 MANIFEST_FILENAMES: frozenset[str] = frozenset(
     {
@@ -46,14 +64,27 @@ MANIFEST_FILENAMES: frozenset[str] = frozenset(
         "yarn.lock",
         "requirements.txt",
         "Cargo.toml",
+        "Cargo.lock",
         "go.mod",
+        "go.sum",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+        "CMakeLists.txt",
+        "meson.build",
         "Makefile",
         "Dockerfile",
+        "Gemfile",
+        "composer.json",
     }
 )
 
-CONFIG_SUFFIXES: frozenset[str] = frozenset({".toml", ".yaml", ".yml", ".json", ".ini", ".cfg"})
-DOC_SUFFIXES: frozenset[str] = frozenset({".md", ".rst", ".txt"})
+CONFIG_SUFFIXES: frozenset[str] = frozenset(
+    {".toml", ".yaml", ".yml", ".json", ".ini", ".cfg", ".xml", ".properties", ".gradle"}
+)
+DOC_SUFFIXES: frozenset[str] = frozenset({".md", ".rst", ".txt", ".adoc"})
 
 
 def _build_pathspec(patterns: list[str]) -> pathspec.PathSpec:
@@ -79,14 +110,17 @@ def _load_ignore_patterns(repo_root: Path, *, respect_gitignore: bool) -> list[s
 
 
 def _is_test_path(rel_posix: str, filename: str) -> bool:
-    """Return True if a source file belongs to a test suite."""
+    """Return True if a source file belongs to a test suite across Python, JVM, JS, C++, Go."""
     parts = rel_posix.split("/")
-    if "tests" in parts or "test" in parts or "__tests__" in parts:
+    if any(p in ("tests", "test", "__tests__", "spec") for p in parts):
         return True
     stem = Path(filename).stem
     return (
         stem.startswith("test_")
         or stem.endswith("_test")
+        or stem.endswith("Test")
+        or stem.endswith("Tests")
+        or stem.endswith("Spec")
         or stem.endswith(".test")
         or stem.endswith(".spec")
     )
@@ -259,7 +293,8 @@ def scan_repository(
     visited_dirs: set[tuple[int, int]] = set()
     try:
         root_stat = resolved_root.stat()
-        visited_dirs.add((root_stat.st_dev, root_stat.st_ino))
+        if (root_stat.st_dev, root_stat.st_ino) != (0, 0):
+            visited_dirs.add((root_stat.st_dev, root_stat.st_ino))
     except OSError:
         pass
 
@@ -308,7 +343,6 @@ def scan_repository(
         for entry in entries:
             rel_posix = entry.relative_to(resolved_root).as_posix()
 
-            # Skip ctxa's own output artifacts so repeated runs are 100% idempotent
             if rel_posix in self_managed_files:
                 continue
 
@@ -358,18 +392,19 @@ def scan_repository(
                     continue
 
                 inode_key = (dir_stat.st_dev, dir_stat.st_ino)
-                if inode_key in visited_dirs:
-                    diagnostics.append(
-                        ScanDiagnostic(
-                            code="symlink_cycle_detected",
-                            severity="warning",
-                            message="Skipped directory symlink cycle.",
-                            source_path=rel_posix,
+                if inode_key != (0, 0):
+                    if inode_key in visited_dirs:
+                        diagnostics.append(
+                            ScanDiagnostic(
+                                code="symlink_cycle_detected",
+                                severity="warning",
+                                message="Skipped directory symlink cycle.",
+                                source_path=rel_posix,
+                            )
                         )
-                    )
-                    continue
+                        continue
+                    visited_dirs.add(inode_key)
 
-                visited_dirs.add(inode_key)
                 _walk_dir(entry, depth + 1)
                 continue
 
@@ -378,7 +413,6 @@ def scan_repository(
 
             files_discovered += 1
 
-            # 1. Secret exclusion check (highest security priority)
             if secret_spec.match_file(rel_posix):
                 files_excluded += 1
                 diagnostics.append(
@@ -391,12 +425,10 @@ def scan_repository(
                 )
                 continue
 
-            # 2. Standard ignore/exclude check
             if exclude_spec.match_file(rel_posix):
                 files_excluded += 1
                 continue
 
-            # 3. Read, validate UTF-8/non-binary, and compute SHA-256
             digest, size_bytes, diag = _read_and_hash_file(
                 entry,
                 max_bytes=config.scanner.max_file_size_bytes,

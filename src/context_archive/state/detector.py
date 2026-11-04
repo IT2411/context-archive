@@ -92,7 +92,7 @@ def _analyze_modified_source_file(
 
     Returns `(modified_symbol_ids, has_structural_or_signature_change)`.
     """
-    if scanned_file.language not in ("python", "typescript", "javascript"):
+    if scanned_file.language is None:
         return [], False
 
     res = extract_all_adapters(repo_root, [scanned_file])
@@ -276,7 +276,7 @@ def detect_repository_changes(
     for mod_path in raw_modified:
         sf = scan_by_path.get(mod_path)
         mod_syms: list[str] = []
-        if sf is not None and sf.language in ("python", "typescript", "javascript"):
+        if sf is not None and sf.language is not None:
             mod_syms, sig_changed = _analyze_modified_source_file(repo_root, sf, previous_graph)
             if sig_changed:
                 has_signature_change = True
