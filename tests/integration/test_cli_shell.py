@@ -30,7 +30,7 @@ def test_cli_subprocess_entrypoint() -> None:
     )
     script_res = runner.invoke(app, ["--version"])
     assert script_res.exit_code == 0
-    assert "ctxa 1.0.2" in script_res.stdout
+    assert "ctxa 1.0.3" in script_res.stdout
     _ = res
 
 

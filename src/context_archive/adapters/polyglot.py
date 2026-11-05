@@ -49,7 +49,6 @@ _CPP_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE
 _GO_IMPORT_RE = re.compile(r'["`]([A-Za-z0-9_./-]+)["`]')
 _RUST_USE_RE = re.compile(r"^\s*use\s+([A-Za-z0-9_:{}*,\s]+);", re.MULTILINE)
 
-# Captures class/struct/interface/object/enum/record/trait with optional constructor params & bases
 _TYPE_DECL_RE = re.compile(
     r"^\s*(?:@[A-Za-z0-9_]+(?:\([^)]*\))?\s*)*"
     r"(?:public\s+|private\s+|protected\s+|internal\s+|abstract\s+|final\s+|open\s+|data\s+|sealed\s+|value\s+)*"
@@ -141,6 +140,44 @@ def _line_at(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+def _find_block_end_line(text: str, start_offset: int, start_line: int) -> int:
+    """Find the closing brace `}` line for a declaration starting at `start_offset`."""
+    brace_pos = text.find("{", start_offset)
+    newline_pos = text.find("\n", start_offset)
+    # Return start_line when no opening brace exists on the declaration header
+    if brace_pos == -1 or (newline_pos != -1 and brace_pos > newline_pos + 120):
+        return start_line
+
+    depth = 0
+    in_string: str | None = None
+    escaped = False
+    max_scan = min(len(text), brace_pos + 16000)
+
+    for idx in range(brace_pos, max_scan):
+        ch = text[idx]
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if in_string is not None:
+            if ch == in_string:
+                in_string = None
+            continue
+        if ch in ('"', "'"):
+            in_string = ch
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return _line_at(text, idx)
+
+    return start_line
+
+
 def _strip_test_suffix(type_name: str) -> str | None:
     """If `type_name` is `BettingEngineTest`, return `BettingEngine`."""
     for suffix in ("Tests", "Test", "Spec", "IT", "E2ETest"):
@@ -193,7 +230,7 @@ class _PolyglotFileRecord:
     raw_imports: list[tuple[str, int]] = field(default_factory=list)
     raw_bases: list[tuple[str, str, int]] = field(default_factory=list)
     raw_type_refs: list[tuple[str, str, int]] = field(default_factory=list)
-    symbol_spans: list[tuple[int, str]] = field(default_factory=list)
+    symbol_spans: list[tuple[int, int, str]] = field(default_factory=list)
 
 
 class PolyglotAdapter:
@@ -357,6 +394,7 @@ class PolyglotAdapter:
             ctor_params = (match.group(3) or "").strip()
             bases_raw = (match.group(4) or "").strip()
             line_no = _line_at(rec.source_text, match.start())
+            line_end = _find_block_end_line(rec.source_text, match.end() - 1, line_no)
 
             is_test_class = rec.is_test_file and type_name.endswith(
                 ("Test", "Tests", "Spec", "E2ETest")
@@ -382,7 +420,6 @@ class PolyglotAdapter:
                             (sym_id, cleaned.split(".")[-1].split("::")[-1], line_no)
                         )
 
-            # Extract constructor parameter type references (`val engine: BettingEngine`)
             if ctor_params:
                 for type_tok in _TYPE_TOKEN_RE.findall(ctor_params):
                     if type_tok != type_name:
@@ -391,12 +428,12 @@ class PolyglotAdapter:
             prov = Provenance(
                 source_path=rec.rel_posix,
                 line_start=line_no,
-                line_end=line_no,
+                line_end=line_end,
                 extractor=EXTRACTOR_ID,
                 evidence_kind="deterministic",
                 confidence="high",
             )
-            ctor_sig = f"({ ' '.join(ctor_params.split()) })" if ctor_params else ""
+            ctor_sig = f"({' '.join(ctor_params.split())})" if ctor_params else ""
             nodes.append(
                 Node(
                     id=sym_id,
@@ -407,7 +444,7 @@ class PolyglotAdapter:
                         "language": rec.language,
                         "declaration_kind": kw,
                         "bases": base_list,
-                        "signature": f"{kw} {type_name}{ctor_sig}",
+                        "signature": ctor_sig,
                         "docstring_summary": "",
                     },
                     provenance=prov,
@@ -423,7 +460,7 @@ class PolyglotAdapter:
                 )
             )
             rec.defined_symbols[type_name] = sym_id
-            rec.symbol_spans.append((line_no, sym_id))
+            rec.symbol_spans.append((line_no, line_end, sym_id))
             if is_test_class:
                 rec.test_symbol_ids.append(sym_id)
             global_by_name.setdefault(type_name, sym_id)
@@ -448,6 +485,7 @@ class PolyglotAdapter:
                 params = " ".join(m.group(3).split())
                 ret_type = (m.group(4) or "Unit").strip()
                 line_no = _line_at(text, m.start())
+                line_end = _find_block_end_line(text, m.end() - 1, line_no)
                 snippet_before = text[max(0, m.start() - 160) : m.end()]
                 is_test = rec.is_test_file and (
                     fn_name.startswith("test") or "@Test" in snippet_before
@@ -459,6 +497,7 @@ class PolyglotAdapter:
                     is_async=is_suspend,
                     is_test=is_test,
                     line_no=line_no,
+                    line_end=line_end,
                     snippet_before=snippet_before,
                     nodes=nodes,
                     edges=edges,
@@ -477,6 +516,7 @@ class PolyglotAdapter:
                 case_name = tm.group(3)
                 fn_name = f"{suite}_{case_name}"
                 line_no = _line_at(text, tm.start())
+                line_end = _find_block_end_line(text, tm.end() - 1, line_no)
                 self._register_callable(
                     rec=rec,
                     fn_name=fn_name,
@@ -484,6 +524,7 @@ class PolyglotAdapter:
                     is_async=False,
                     is_test=True,
                     line_no=line_no,
+                    line_end=line_end,
                     snippet_before="",
                     nodes=nodes,
                     edges=edges,
@@ -501,6 +542,7 @@ class PolyglotAdapter:
                     continue
                 params = " ".join(cm.group(3).split())
                 line_no = _line_at(text, cm.start())
+                line_end = _find_block_end_line(text, cm.end() - 1, line_no)
                 snippet_before = text[max(0, cm.start() - 160) : cm.end()]
                 is_test = rec.is_test_file and (
                     fn_name.startswith("test") or "@Test" in snippet_before
@@ -512,6 +554,7 @@ class PolyglotAdapter:
                     is_async="async" in snippet_before,
                     is_test=is_test,
                     line_no=line_no,
+                    line_end=line_end,
                     snippet_before=snippet_before,
                     nodes=nodes,
                     edges=edges,
@@ -532,6 +575,7 @@ class PolyglotAdapter:
             ret_type = (om.group(3) or "").strip()
             sig = f"({params}) -> {ret_type}" if ret_type else f"({params})"
             line_no = _line_at(text, om.start())
+            line_end = _find_block_end_line(text, om.end() - 1, line_no)
             snippet_before = text[max(0, om.start() - 100) : om.end()]
             is_test = rec.is_test_file and (
                 fn_name.startswith(("test", "Test")) or "#[test]" in snippet_before
@@ -543,6 +587,7 @@ class PolyglotAdapter:
                 is_async="async" in snippet_before,
                 is_test=is_test,
                 line_no=line_no,
+                line_end=line_end,
                 snippet_before=snippet_before,
                 nodes=nodes,
                 edges=edges,
@@ -560,6 +605,7 @@ class PolyglotAdapter:
         is_async: bool,
         is_test: bool,
         line_no: int,
+        line_end: int,
         snippet_before: str,
         nodes: list[Node],
         edges: list[Edge],
@@ -577,7 +623,7 @@ class PolyglotAdapter:
         prov = Provenance(
             source_path=rec.rel_posix,
             line_start=line_no,
-            line_end=line_no,
+            line_end=max(line_no, line_end),
             extractor=EXTRACTOR_ID,
             evidence_kind="deterministic",
             confidence="high",
@@ -608,7 +654,7 @@ class PolyglotAdapter:
             )
         )
         rec.defined_symbols[fn_name] = sym_id
-        rec.symbol_spans.append((line_no, sym_id))
+        rec.symbol_spans.append((line_no, max(line_no, line_end), sym_id))
         if is_test:
             rec.test_symbol_ids.append(sym_id)
         global_by_name.setdefault(fn_name, sym_id)
@@ -662,7 +708,6 @@ class PolyglotAdapter:
         edges: list[Edge],
     ) -> None:
         for rec in file_records:
-            # 1. IMPORTS edges
             for imp_str, line_no in rec.raw_imports:
                 target_id: str | None = None
                 cleaned_imp = imp_str.rstrip(".*")
@@ -695,7 +740,6 @@ class PolyglotAdapter:
                         )
                     )
 
-            # 2. INHERITS edges
             for class_id, base_short, line_no in rec.raw_bases:
                 base_id = global_symbols_by_name.get(base_short)
                 if base_id is not None and base_id != class_id:
@@ -717,7 +761,6 @@ class PolyglotAdapter:
                         )
                     )
 
-            # 3. DEPENDS_ON edges from constructor/method parameter & return types
             for src_sym_id, ref_type_name, line_no in rec.raw_type_refs:
                 target_type_id = global_symbols_by_name.get(ref_type_name)
                 if target_type_id is not None and target_type_id != src_sym_id:
@@ -739,7 +782,6 @@ class PolyglotAdapter:
                         )
                     )
 
-            # 4. Naming-convention & body-reference TESTED_BY linking for test classes/files
             if rec.is_test_file:
                 file_stem = PurePosixPath(rec.rel_posix).stem
                 target_class_name = _strip_test_suffix(file_stem)
@@ -765,7 +807,6 @@ class PolyglotAdapter:
                             )
                         )
 
-                # Also link any repo class/type referenced inside a test file to `primary_test_id`
                 for type_m in _TYPE_TOKEN_RE.finditer(rec.source_text):
                     ref_name = type_m.group(1)
                     ref_id = global_symbols_by_name.get(ref_name)
@@ -793,8 +834,7 @@ class PolyglotAdapter:
                             )
                         )
 
-            # 5. CALLS and TESTED_BY edges from function/constructor invocations
-            rec.symbol_spans.sort(key=lambda item: item[0])
+            rec.symbol_spans.sort(key=lambda item: (item[0], -(item[1] - item[0])))
             for call_m in _CALL_INVOCATION_RE.finditer(rec.source_text):
                 callee_name = call_m.group(1)
                 if callee_name in _CONTROL_KEYWORDS:
@@ -805,13 +845,10 @@ class PolyglotAdapter:
 
                 call_line = _line_at(rec.source_text, call_m.start())
                 caller_id = rec.module_id
-                for span_line, sym_id in rec.symbol_spans:
-                    if span_line < call_line:
+                for span_start, span_end, sym_id in rec.symbol_spans:
+                    if span_start <= call_line <= span_end:
                         caller_id = sym_id
-                    elif span_line == call_line:
-                        caller_id = sym_id
-                        break
-                    else:
+                    elif span_start > call_line:
                         break
 
                 if caller_id == target_sym_id:
